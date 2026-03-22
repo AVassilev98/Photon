@@ -41,6 +41,7 @@ add_library(photon
     src/photon_status.c
     src/photon_core.c
     src/photon_instance.c
+    src/photon_window.c
 )
 
 target_include_directories(photon
@@ -55,6 +56,7 @@ target_link_libraries(photon
     PUBLIC
         Vulkan::Vulkan
         foundation
+        glfw
 )
 
 if(PHOTON_ENABLE_VALIDATION_DEFAULT)

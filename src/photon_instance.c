@@ -1,18 +1,10 @@
-#include "photon/photon_instance.h"
-#include "photon/photon_log.h"
-#include "photon_internal.h"
+#include "photon_instance_internal.h"
+#include "photon_window_internal.h"
+#include "photon/photon_error.h"
 
 #include <GLFW/glfw3.h>
 #include <stdlib.h>
 #include <string.h>
-
-
-typedef struct PhInstance
-{
-    VkInstance               instance;
-    VkDebugUtilsMessengerEXT debugMessenger;
-} PhInstance;
-
 
 static const char *s_validationLayers[] = {
     "VK_LAYER_KHRONOS_validation",
@@ -74,21 +66,20 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
     uint32_t            enabledLayerCount        = 0;
     uint32_t            enabledExtensionCount    = 0;
     uint32_t            vkLayerCount             = 0;
-    uint32_t            glfwExtensionCount       = 0;
-    const char        **ppGlfwExtensions         = NULL;
+    uint32_t            windowExtensionCount     = 0;
 
-    PH_NULL_CHECK(settings);
-    PH_NULL_CHECK(settings->appName);
+    PH_NULL_CHECK(PH_LOG_ERROR, settings);
+    PH_NULL_CHECK(PH_LOG_ERROR, settings->appName);
 
     if (settings->enableDebug)
     {
-        PH_VK_CHECK_GOTO(vkEnumerateInstanceLayerProperties(&vkLayerCount, NULL), status, exit);
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateInstanceLayerProperties(&vkLayerCount, NULL), status, exit);
         pLayerProperties = malloc(sizeof(VkLayerProperties) * vkLayerCount);
-        PH_CHECK_GOTO(pLayerProperties, PH_ERR_OUT_OF_MEMORY, status, exit);
-        PH_VK_CHECK_GOTO(vkEnumerateInstanceLayerProperties(&vkLayerCount, pLayerProperties), status, exit);
+        PH_CHECK_GOTO(PH_LOG_ERROR, pLayerProperties, PH_ERR_OUT_OF_MEMORY, status, exit);
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateInstanceLayerProperties(&vkLayerCount, pLayerProperties), status, exit);
 
         ppLayerNames = malloc(sizeof(char *) * PH_NUM_ELEMS(s_validationLayers));
-        PH_CHECK_GOTO(ppLayerNames, PH_ERR_OUT_OF_MEMORY, status, exit);
+        PH_CHECK_GOTO(PH_LOG_ERROR, ppLayerNames, PH_ERR_OUT_OF_MEMORY, status, exit);
 
         PH_LOG_INFO("Validation layers:");
         for (uint32_t i = 0; i < vkLayerCount; i++)
@@ -101,15 +92,16 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
             }
         }
     }
+    glfwInit();
 
-    ppGlfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_get_required_extensions(NULL, &windowExtensionCount), status, exit);
 
     uint32_t extraExtensions = settings->enableDebug ? 1 : 0; /* debug utils */
-    ppExtensionNames = malloc(sizeof(char *) * (glfwExtensionCount + extraExtensions));
-    PH_CHECK_GOTO(ppExtensionNames, PH_ERR_OUT_OF_MEMORY, status, exit);
+    ppExtensionNames = malloc(sizeof(char *) * (windowExtensionCount + extraExtensions));
+    PH_CHECK_GOTO(PH_LOG_ERROR, ppExtensionNames, PH_ERR_OUT_OF_MEMORY, status, exit);
 
-    memcpy(ppExtensionNames, ppGlfwExtensions, sizeof(char *) * glfwExtensionCount);
-    enabledExtensionCount = glfwExtensionCount;
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_get_required_extensions(ppExtensionNames, &windowExtensionCount), status, exit);
+    enabledExtensionCount = windowExtensionCount;
 
     if (settings->enableDebug)
         ppExtensionNames[enabledExtensionCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
@@ -136,8 +128,8 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
     };
 
     pInstance = calloc(1, sizeof(PhInstance));
-    PH_CHECK_GOTO(pInstance, PH_ERR_OUT_OF_MEMORY, status, exit);
-    PH_VK_CHECK_GOTO(vkCreateInstance(&instanceInfo, NULL, &pInstance->instance), status, exit);
+    PH_CHECK_GOTO(PH_LOG_ERROR, pInstance, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateInstance(&instanceInfo, NULL, &pInstance->instance), status, exit);
 
     if (settings->enableDebug)
     {
@@ -145,8 +137,8 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
             (PFN_vkCreateDebugUtilsMessengerEXT)
             vkGetInstanceProcAddr(pInstance->instance, "vkCreateDebugUtilsMessengerEXT");
 
-        PH_CHECK_GOTO(fn, PH_ERR_EXTENSION_NOT_PRESENT, status, exit);
-        PH_VK_CHECK_GOTO(fn(pInstance->instance, &messengerInfo, NULL, &pInstance->debugMessenger), status, exit);
+        PH_CHECK_GOTO(PH_LOG_ERROR, fn, PH_ERR_EXTENSION_NOT_PRESENT, status, exit);
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR, fn(pInstance->instance, &messengerInfo, NULL, &pInstance->debugMessenger), status, exit);
     }
 
 exit:
@@ -168,7 +160,7 @@ exit:
 
 PhStatus ph_destroy_instance(PhInstanceHandle handle)
 {
-    PH_NULL_CHECK(handle);
+    PH_NULL_CHECK(PH_LOG_ERROR, handle);
 
     if (handle->debugMessenger)
     {
