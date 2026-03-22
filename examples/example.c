@@ -5,6 +5,13 @@
 #include "stdio.h"
 
 int main(void) {
-    printf("Hello World!\n");
+    PhInstanceHandle handle;
+    PhInstanceSettings instanceSettings = {
+        .appName = "Photon",
+        .appVersion = 1,
+        .enableDebug = true,
+    };
+
+    ph_create_instance(&instanceSettings, &handle);
     return 0;
 }
