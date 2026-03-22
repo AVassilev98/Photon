@@ -1,0 +1,4 @@
+[submodule "extern/foundation"]
+	path = extern/foundation
+	url = https://github.com/AVassilev98/foundation.git
+    branch = main
