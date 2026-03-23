@@ -27,7 +27,7 @@ int main(void) {
     };
     PH_CHECK(PH_LOG_ERROR, ph_create_window(&windowSettings, &hWindow));
 
-    PhCapabilityRequests deviceCaps = {
+    PhCapability deviceCaps = {
         .asyncComputeQueue = true,
         .dedicatedTransfer = true,
         .swapchain = true,

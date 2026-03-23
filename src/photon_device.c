@@ -16,7 +16,7 @@ static bool _has_extension(VkExtensionProperties *exts, uint32_t count, const ch
     return false;
 }
 
-static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhCapabilityRequests caps, bool *pMeetsRequirements)
+static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhCapability caps, bool *pMeetsRequirements)
 {
     PhStatus                 status        = PH_SUCCESS;
     VkQueueFamilyProperties *queueFamilies = NULL;
@@ -125,10 +125,6 @@ static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhC
     if (caps.asyncComputeQueue && !hasAsyncCompute)      ok = false;
     if (caps.dedicatedTransfer && !hasDedicatedTransfer) ok = false;
 
-    if (ok)
-    {
-        PH_LOG_INFO("Found acceptable physical device: %s", props.deviceName);
-    }
     *pMeetsRequirements = ok;
 
 exit:
@@ -137,7 +133,144 @@ exit:
     return status;
 }
 
-PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapabilityRequests caps, PhDeviceInfoSpan *ppDeviceInfo)
+static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapability caps, PhDeviceInfo *pDeviceInfo)
+{
+    PhStatus                 status        = PH_SUCCESS;
+    VkQueueFamilyProperties *queueFamilies = NULL;
+    const char             **extensions    = NULL;
+
+    PH_NULL_CHECK(PH_LOG_ERROR, pDeviceInfo);
+
+    pDeviceInfo->capabilities         = caps;
+    
+    pDeviceInfo->handle = malloc(sizeof(PhDevice));
+    PH_CHECK_GOTO(PH_LOG_ERROR, pDeviceInfo->handle != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
+
+    pDeviceInfo->handle->physDevice   = physDevice;
+    vkGetPhysicalDeviceProperties(physDevice, &pDeviceInfo->handle->props);
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physDevice, &queueFamilyCount, NULL);
+    queueFamilies = malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
+    PH_CHECK_GOTO(PH_LOG_ERROR, queueFamilies, PH_ERR_OUT_OF_MEMORY, status, exit);
+    vkGetPhysicalDeviceQueueFamilyProperties(physDevice, &queueFamilyCount, queueFamilies);
+    pDeviceInfo->pName   = pDeviceInfo->handle->props.deviceName;
+
+    uint32_t graphicsFamily  = UINT32_MAX;
+    uint32_t computeFamily   = UINT32_MAX;
+    uint32_t transferFamily  = UINT32_MAX;
+    for (uint32_t i = 0; i < queueFamilyCount; i++)
+    {
+        VkQueueFlags f = queueFamilies[i].queueFlags;
+        if (graphicsFamily == UINT32_MAX && (f & VK_QUEUE_GRAPHICS_BIT))
+            graphicsFamily = i;
+        if (computeFamily == UINT32_MAX && (f & VK_QUEUE_COMPUTE_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT))
+            computeFamily = i;
+        if (transferFamily == UINT32_MAX && (f & VK_QUEUE_TRANSFER_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT) && !(f & VK_QUEUE_COMPUTE_BIT))
+            transferFamily = i;
+    }
+
+    float                  queuePriority = 1.0f;
+    VkDeviceQueueCreateInfo queueInfos[3];
+    uint32_t                queueInfoCount = 0;
+
+    if (graphicsFamily != UINT32_MAX)
+        queueInfos[queueInfoCount++] = (VkDeviceQueueCreateInfo){
+            .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = graphicsFamily,
+            .queueCount       = 1,
+            .pQueuePriorities = &queuePriority,
+        };
+    if (computeFamily != UINT32_MAX)
+        queueInfos[queueInfoCount++] = (VkDeviceQueueCreateInfo){
+            .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = computeFamily,
+            .queueCount       = 1,
+            .pQueuePriorities = &queuePriority,
+        };
+    if (transferFamily != UINT32_MAX)
+        queueInfos[queueInfoCount++] = (VkDeviceQueueCreateInfo){
+            .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = transferFamily,
+            .queueCount       = 1,
+            .pQueuePriorities = &queuePriority,
+        };
+
+    uint32_t extCount = 0;
+    extensions = malloc(sizeof(const char *) * 8);
+    PH_CHECK_GOTO(PH_LOG_ERROR, extensions, PH_ERR_OUT_OF_MEMORY, status, exit);
+
+    if (caps.swapchain)
+        extensions[extCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    if (caps.rtCapable)
+    {
+        extensions[extCount++] = VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME;
+        extensions[extCount++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
+        extensions[extCount++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
+    }
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures = {
+        .sType                 = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+        .accelerationStructure = caps.rtCapable,
+    };
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures = {
+        .sType              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+        .pNext              = caps.rtCapable ? &accelFeatures : NULL,
+        .rayTracingPipeline = caps.rtCapable,
+    };
+    VkPhysicalDeviceVulkan13Features vk13 = {
+        .sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext            = caps.rtCapable ? &rtFeatures : NULL,
+        .dynamicRendering = caps.dynamicRendering,
+        .synchronization2 = caps.synchronization2,
+    };
+    VkPhysicalDeviceVulkan12Features vk12 = {
+        .sType                                        = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext                                        = &vk13,
+        .bufferDeviceAddress                          = caps.bufferDeviceAddress,
+        .descriptorIndexing                           = caps.descriptorIndexing,
+        .runtimeDescriptorArray                       = caps.descriptorIndexing,
+        .descriptorBindingPartiallyBound              = caps.descriptorIndexing,
+        .descriptorBindingSampledImageUpdateAfterBind = caps.descriptorIndexing,
+        .shaderSampledImageArrayNonUniformIndexing    = caps.descriptorIndexing,
+        .timelineSemaphore                            = caps.timelineSemaphore,
+    };
+    VkPhysicalDeviceFeatures2 features2 = {
+        .sType    = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext    = &vk12,
+        .features = {
+            .samplerAnisotropy = caps.samplerAnisotropy,
+            .fillModeNonSolid  = caps.fillModeNonSolid,
+            .wideLines         = caps.wideLines,
+            .largePoints       = caps.largePoints,
+            .multiDrawIndirect = caps.multiDrawIndirect,
+            .shaderInt64       = caps.shaderInt64,
+            .shaderFloat64     = caps.shaderFloat64,
+        },
+    };
+
+    VkDeviceCreateInfo deviceInfo = {
+        .sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext                   = &features2,
+        .queueCreateInfoCount    = queueInfoCount,
+        .pQueueCreateInfos       = queueInfos,
+        .enabledExtensionCount   = extCount,
+        .ppEnabledExtensionNames = extensions,
+    };
+
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateDevice(physDevice, &deviceInfo, NULL, &pDeviceInfo->handle->device), status, exit);
+
+exit:
+    if (status != PH_SUCCESS)
+    {
+        PH_FREE_IF_SET(pDeviceInfo->handle);
+    }
+    PH_FREE_IF_SET(queueFamilies);
+    PH_FREE_IF_SET(extensions);
+    return status;
+}
+
+PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *pDeviceInfoSpan)
 {
     PhStatus status = PH_SUCCESS;
     uint32_t physDeviceCount = 0;
@@ -145,7 +278,7 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapabilityRequests c
     PhDeviceInfo *pDeviceInfos = NULL;
     uint32_t deviceInfoCount = 0;
 
-    PH_NULL_CHECK(PH_LOG_ERROR, ppDeviceInfo);
+    PH_NULL_CHECK(PH_LOG_ERROR, pDeviceInfoSpan);
 
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumeratePhysicalDevices(hInstance->instance, &physDeviceCount, NULL), 
         status, exit);
@@ -166,11 +299,9 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapabilityRequests c
             PhDevice *pDevice = malloc(sizeof(PhDevice));
             PH_CHECK_GOTO(PH_LOG_ERROR, pDevice != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
 
-            pDevice->physDevice = pPhysicalDevices[i];
-            vkGetPhysicalDeviceProperties(pPhysicalDevices[i], &pDevice->props);
-            vkGetPhysicalDeviceFeatures(pPhysicalDevices[i], &pDevice->features);
+            PH_PROPAGATE_GOTO(PH_LOG_ERROR, _initialize_ph_device_info(pPhysicalDevices[i], caps, &pDeviceInfos[deviceInfoCount]), status, exit);
+            PH_LOG_INFO("Initialized device: %s", pDeviceInfos[deviceInfoCount].pName);
             
-            pDeviceInfos[deviceInfoCount].handle = pDevice;
             deviceInfoCount++;
         }
     }
@@ -179,8 +310,8 @@ exit:
     PH_FREE_IF_SET(pPhysicalDevices);
     if (status == PH_SUCCESS)
     {
-        ppDeviceInfo->len =  deviceInfoCount;
-        ppDeviceInfo->ptr =  pDeviceInfos;
+        pDeviceInfoSpan->len =  deviceInfoCount;
+        pDeviceInfoSpan->ptr =  pDeviceInfos;
     }
     else
     {

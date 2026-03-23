@@ -5,12 +5,8 @@
 #include "foundation/span.h"
 
 typedef struct PhDevice *PhDeviceHandle;
-typedef struct PhDeviceInfo {
-    PhDeviceHandle handle;
-} PhDeviceInfo;
-FDN_SPAN_DEFINE(PhDeviceInfo, PhDeviceInfoSpan)
 
-typedef struct PhCapabilityRequests {
+typedef struct PhCapability {
     uint32_t discrete               : 1;
     uint32_t rtCapable              : 1;
     uint32_t swapchain              : 1;
@@ -32,6 +28,14 @@ typedef struct PhCapabilityRequests {
     PhExtent2D minimumImageDimensions;
     uint32_t   minPushConstantsSize;
     uint64_t   minimumVRAM;
-} PhCapabilityRequests;
+} PhCapability;
 
-PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapabilityRequests caps, PhDeviceInfoSpan *ppDeviceInfo);
+typedef struct PhDeviceInfo {
+    char *pName;
+    PhDeviceHandle handle;
+    PhCapability capabilities;
+} PhDeviceInfo;
+FDN_SPAN_DEFINE(PhDeviceInfo, PhDeviceInfoSpan)
+
+
+PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
