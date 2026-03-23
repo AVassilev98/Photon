@@ -140,6 +140,7 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
     const char             **extensions    = NULL;
 
     PH_NULL_CHECK(PH_LOG_ERROR, pDeviceInfo);
+    *pDeviceInfo = (PhDeviceInfo){ 0 };
 
     pDeviceInfo->capabilities         = caps;
     
@@ -259,6 +260,12 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
     };
 
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateDevice(physDevice, &deviceInfo, NULL, &pDeviceInfo->handle->device), status, exit);
+
+    vkGetDeviceQueue(pDeviceInfo->handle->device, graphicsFamily, 0, &pDeviceInfo->handle->graphicsQueue);
+    if (computeFamily  != UINT32_MAX)
+        vkGetDeviceQueue(pDeviceInfo->handle->device, computeFamily,  0, &pDeviceInfo->handle->computeQueue);
+    if (transferFamily != UINT32_MAX)
+        vkGetDeviceQueue(pDeviceInfo->handle->device, transferFamily, 0, &pDeviceInfo->handle->transferQueue);
 
 exit:
     if (status != PH_SUCCESS)
