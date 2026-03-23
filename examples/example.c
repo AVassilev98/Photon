@@ -46,6 +46,19 @@ int main(void) {
     PhDeviceInfoSpan deviceInfos;
     PH_CHECK(PH_LOG_ERROR, ph_enumerate_devices(hInstance, deviceCaps, &deviceInfos));
 
+
+    PhPresentOptions presentOptions = {
+        .format = {
+            .format = VK_FORMAT_B8G8R8A8_SRGB,
+            .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+        },
+        .mode = VK_PRESENT_MODE_FIFO_KHR
+    };
+    PhSurfaceHandle hSurface;
+    PH_CHECK(PH_LOG_ERROR, ph_window_get_surface(hWindow, &hSurface));
+    PH_CHECK(PH_LOG_ERROR, ph_configure_device_for_present(deviceInfos.ptr[0].handle, hSurface, presentOptions));
+
+
     while(!ph_window_should_close(hWindow))
     {
         ph_window_poll_events(hWindow);

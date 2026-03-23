@@ -24,11 +24,20 @@ typedef struct PhCapability {
     uint32_t descriptorIndexing     : 1;
     uint32_t timelineSemaphore      : 1;
     uint32_t dynamicRendering       : 1;
+    uint32_t extendedDynamicState   : 1;
     uint32_t synchronization2       : 1;
     PhExtent2D minimumImageDimensions;
     uint32_t   minPushConstantsSize;
     uint64_t   minimumVRAM;
 } PhCapability;
+
+typedef VkSurfaceFormatKHR PhSurfaceFormat;
+typedef VkPresentModeKHR PhPresentMode;
+
+typedef struct PhPresentOptions {
+    PhSurfaceFormat format;
+    PhPresentMode mode;
+} PhPresentOptions;
 
 typedef struct PhDeviceInfo {
     char *pName;
@@ -39,3 +48,4 @@ FDN_SPAN_DEFINE(PhDeviceInfo, PhDeviceInfoSpan)
 
 
 PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
+PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);

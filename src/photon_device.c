@@ -249,10 +249,15 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
             .shaderFloat64     = caps.shaderFloat64,
         },
     };
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extendedDynamicStateFeatures = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+        .pNext = &features2,
+        .extendedDynamicState = caps.extendedDynamicState,
+    };
 
     VkDeviceCreateInfo deviceInfo = {
         .sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext                   = &features2,
+        .pNext                   = &extendedDynamicStateFeatures,
         .queueCreateInfoCount    = queueInfoCount,
         .pQueueCreateInfos       = queueInfos,
         .enabledExtensionCount   = extCount,
@@ -328,5 +333,156 @@ exit:
         }
         PH_FREE_IF_SET(pDeviceInfos);
     }
+    return status;
+}
+
+static bool _ph_requested_surface_format_in_list(VkSurfaceFormatKHR desiredFormat, VkSurfaceFormatKHR *pSurfaceFormats, uint32_t surfaceFormatCount)
+{
+    for (size_t i = 0; i < surfaceFormatCount; i++)
+    {
+        if (desiredFormat.colorSpace == pSurfaceFormats[i].colorSpace &&
+            desiredFormat.format == pSurfaceFormats[i].format)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool _ph_requested_present_mode_in_list(VkPresentModeKHR desiredMode, VkPresentModeKHR *pPresentModes, uint32_t presentModeCount)
+{
+    for (size_t i = 0; i < presentModeCount; i++)
+    {
+        if (desiredMode == pPresentModes[i])
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts)
+{
+    PhStatus status = PH_SUCCESS;
+    uint32_t surfaceFormatCount = 0;
+    VkSurfaceFormatKHR *pSurfaceFormats = NULL;
+    uint32_t presentModeCount = 0;
+    VkPresentModeKHR *pPresentModes = NULL;
+
+    PH_NULL_CHECK(PH_LOG_ERROR, hDevice);
+    PH_NULL_CHECK(PH_LOG_ERROR, hSurface);
+
+    VkSurfaceCapabilitiesKHR surfaceCapabilities = { 0 };
+    PH_VK_CHECK(PH_LOG_ERROR, 
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(hDevice->physDevice, hSurface, &surfaceCapabilities));
+
+    PH_VK_CHECK(PH_LOG_ERROR, 
+        vkGetPhysicalDeviceSurfaceFormatsKHR(hDevice->physDevice, hSurface, &surfaceFormatCount, NULL));
+    pSurfaceFormats = malloc(sizeof(VkSurfaceFormatKHR) * surfaceFormatCount);
+    PH_NULL_CHECK_GOTO(PH_LOG_ERROR, pSurfaceFormats, status, cleanup);
+    PH_VK_CHECK(PH_LOG_ERROR, 
+        vkGetPhysicalDeviceSurfaceFormatsKHR(hDevice->physDevice, hSurface, &surfaceFormatCount, pSurfaceFormats));
+    
+    PH_VK_CHECK(PH_LOG_ERROR, 
+        vkGetPhysicalDeviceSurfacePresentModesKHR(hDevice->physDevice, hSurface, &presentModeCount, NULL));
+    pPresentModes = malloc(sizeof(VkPresentModeKHR) * presentModeCount);
+    PH_NULL_CHECK_GOTO(PH_LOG_ERROR, pPresentModes, status, cleanup);
+    PH_VK_CHECK(PH_LOG_ERROR, 
+        vkGetPhysicalDeviceSurfacePresentModesKHR(hDevice->physDevice, hSurface, &presentModeCount, pPresentModes));
+
+    PH_CHECK_GOTO(PH_LOG_ERROR, _ph_requested_surface_format_in_list(opts.format, pSurfaceFormats, surfaceFormatCount),
+        PH_ERR_NOT_FOUND, status, cleanup);
+    PH_CHECK_GOTO(PH_LOG_ERROR, _ph_requested_present_mode_in_list(opts.mode, pPresentModes, presentModeCount),
+        PH_ERR_NOT_FOUND, status, cleanup);
+
+    uint32_t presentFamily = UINT32_MAX;
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(hDevice->physDevice, &queueFamilyCount, NULL);
+    for (uint32_t i = 0; i < queueFamilyCount; i++)
+    {
+        VkBool32 supported = VK_FALSE;
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkGetPhysicalDeviceSurfaceSupportKHR(hDevice->physDevice, i, hSurface, &supported),
+            status, cleanup);
+        if (supported)
+        {
+            presentFamily = i;
+            break;
+        }
+    }
+    PH_CHECK_GOTO(PH_LOG_ERROR, presentFamily != UINT32_MAX, PH_ERR_UNSUPPORTED, status, cleanup);
+
+    uint32_t imageCount = surfaceCapabilities.minImageCount + 1;
+    if (surfaceCapabilities.maxImageCount > 0 && imageCount > surfaceCapabilities.maxImageCount)
+        imageCount = surfaceCapabilities.maxImageCount;
+
+    VkExtent2D extent = surfaceCapabilities.currentExtent;
+
+    VkSwapchainCreateInfoKHR swapchainInfo = {
+        .sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface          = hSurface,
+        .minImageCount    = imageCount,
+        .imageFormat      = opts.format.format,
+        .imageColorSpace  = opts.format.colorSpace,
+        .imageExtent      = extent,
+        .imageArrayLayers = 1,
+        .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .preTransform     = surfaceCapabilities.currentTransform,
+        .compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode      = opts.mode,
+        .clipped          = VK_TRUE,
+        .oldSwapchain     = VK_NULL_HANDLE,
+    };
+
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+        vkCreateSwapchainKHR(hDevice->device, &swapchainInfo, NULL, &hDevice->swapchain),
+        status, cleanup);
+
+    hDevice->swapchainFormat = opts.format.format;
+    hDevice->swapchainExtent = extent;
+
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+        vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, NULL),
+        status, cleanup);
+    hDevice->pSwapchainImages = malloc(sizeof(VkImage) * hDevice->swapchainImageCount);
+    PH_CHECK_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImages, PH_ERR_OUT_OF_MEMORY, status, cleanup);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+        vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, hDevice->pSwapchainImages),
+        status, cleanup);
+
+    hDevice->pSwapchainImageViews = malloc(sizeof(VkImageView) * hDevice->swapchainImageCount);
+    PH_CHECK_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImageViews, PH_ERR_OUT_OF_MEMORY, status, cleanup);
+
+    for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
+    {
+        VkImageViewCreateInfo viewInfo = {
+            .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image      = hDevice->pSwapchainImages[i],
+            .viewType   = VK_IMAGE_VIEW_TYPE_2D,
+            .format     = hDevice->swapchainFormat,
+            .components = {
+                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = {
+                .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel   = 0,
+                .levelCount     = 1,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+            },
+        };
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkCreateImageView(hDevice->device, &viewInfo, NULL, &hDevice->pSwapchainImageViews[i]),
+            status, cleanup);
+    }
+
+cleanup:
+    PH_FREE_IF_SET(pSurfaceFormats);
+    PH_FREE_IF_SET(pPresentModes);
     return status;
 }
