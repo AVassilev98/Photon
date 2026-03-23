@@ -4,6 +4,7 @@
 #include "photon/photon.h"
 #include "photon/photon_error.h"
 #include "photon/photon_device.h"
+#include "photon/photon_shader.h"
 
 #include "stdio.h"
 
@@ -58,6 +59,8 @@ int main(void) {
     PH_CHECK(PH_LOG_ERROR, ph_window_get_surface(hWindow, &hSurface));
     PH_CHECK(PH_LOG_ERROR, ph_configure_device_for_present(deviceInfos.ptr[0].handle, hSurface, presentOptions));
 
+    PhShaderModule triangleShader;
+    ph_create_shader_module(deviceInfos.ptr[0].handle, SHADER_DIR "/triangle.spv", &triangleShader);
 
     while(!ph_window_should_close(hWindow))
     {

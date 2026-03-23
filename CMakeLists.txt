@@ -43,6 +43,7 @@ add_library(photon
     src/photon_instance.c
     src/photon_window.c
     src/photon_device.c
+    src/photon_shader.c
 )
 
 target_include_directories(photon
