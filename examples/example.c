@@ -3,6 +3,8 @@
 #include <GLFW/glfw3.h>
 #include "photon/photon.h"
 #include "photon/photon_error.h"
+#include "photon/photon_device.h"
+
 #include "stdio.h"
 
 int main(void) {
@@ -14,7 +16,6 @@ int main(void) {
         .appVersion = 1,
         .enableDebug = true,
     };
-
     PH_CHECK(PH_LOG_ERROR, ph_create_instance(&instanceSettings, &hInstance));
 
     PhWindowSettings windowSettings = {
@@ -24,8 +25,26 @@ int main(void) {
         .title = "Photon",
         .hInstance = hInstance
     };
-
     PH_CHECK(PH_LOG_ERROR, ph_create_window(&windowSettings, &hWindow));
+
+    PhCapabilityRequests deviceCaps = {
+        .asyncComputeQueue = true,
+        .dedicatedTransfer = true,
+        .swapchain = true,
+        .graphicsQueue = true,
+        .discrete = true,
+        .rtCapable = true,
+        .minimumImageDimensions = {
+            .height = 1080,
+            .width = 1920,
+        },
+        .timelineSemaphore = true,
+        .synchronization2 = true,
+        .descriptorIndexing = true,
+    };
+
+    PhDeviceInfoSpan deviceInfos;
+    PH_CHECK(PH_LOG_ERROR, ph_enumerate_devices(hInstance, deviceCaps, &deviceInfos));
 
     while(!ph_window_should_close(hWindow))
     {
