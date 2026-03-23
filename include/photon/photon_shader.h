@@ -4,7 +4,13 @@
 #include <vulkan/vulkan.h>
 
 typedef struct PhDevice *PhDeviceHandle;
-typedef VkShaderModule PhShaderModule;
 
-PhStatus ph_create_shader_module(PhDeviceHandle hDevice, const char *path, PhShaderModule *out);
-PhStatus ph_destroy_shader_module(PhDeviceHandle hDevice, PhShaderModule module);
+typedef struct PhShaderModule
+{
+    VkShaderModule                   vkModule;
+    VkPipelineShaderStageCreateInfo *pStages;
+    uint32_t                         stageCount;
+} PhShaderModule;
+
+PhStatus ph_create_shader_module (PhDeviceHandle hDevice, const char *path, PhShaderModule *out);
+PhStatus ph_destroy_shader_module(PhDeviceHandle hDevice, PhShaderModule *module);

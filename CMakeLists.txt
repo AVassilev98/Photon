@@ -27,6 +27,17 @@ set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
+FetchContent_Declare(
+    spirv_reflect
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Reflect.git
+    GIT_TAG        main
+    GIT_SHALLOW    TRUE
+)
+set(SPIRV_REFLECT_EXECUTABLE     OFF CACHE BOOL "" FORCE)
+set(SPIRV_REFLECT_EXAMPLES       OFF CACHE BOOL "" FORCE)
+set(SPIRV_REFLECT_STATIC_LIB     ON  CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(spirv_reflect)
+
 # foundation (standalone container/utility library, consumed as a git submodule)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/foundation/CMakeLists.txt")
     message(FATAL_ERROR
@@ -59,6 +70,7 @@ target_link_libraries(photon
         Vulkan::Vulkan
         foundation
         glfw
+        spirv-reflect-static
 )
 
 if(PHOTON_ENABLE_VALIDATION_DEFAULT)
