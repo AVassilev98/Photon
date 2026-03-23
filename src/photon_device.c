@@ -53,14 +53,12 @@ static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhC
 
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physDevice, &queueFamilyCount, NULL);
-    queueFamilies = malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, queueFamilies, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, queueFamilies, sizeof(VkQueueFamilyProperties) * queueFamilyCount, status, exit);
     vkGetPhysicalDeviceQueueFamilyProperties(physDevice, &queueFamilyCount, queueFamilies);
 
     uint32_t extCount = 0;
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateDeviceExtensionProperties(physDevice, NULL, &extCount, NULL), status, exit);
-    exts = malloc(sizeof(VkExtensionProperties) * extCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, exts, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, exts, sizeof(VkExtensionProperties) * extCount, status, exit);
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateDeviceExtensionProperties(physDevice, NULL, &extCount, exts), status, exit);
 
     bool ok = true;
@@ -144,16 +142,14 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
 
     pDeviceInfo->capabilities         = caps;
     
-    pDeviceInfo->handle = malloc(sizeof(PhDevice));
-    PH_CHECK_GOTO(PH_LOG_ERROR, pDeviceInfo->handle != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, pDeviceInfo->handle, sizeof(PhDevice), status, exit);
 
     pDeviceInfo->handle->physDevice   = physDevice;
     vkGetPhysicalDeviceProperties(physDevice, &pDeviceInfo->handle->props);
 
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physDevice, &queueFamilyCount, NULL);
-    queueFamilies = malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, queueFamilies, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, queueFamilies, sizeof(VkQueueFamilyProperties) * queueFamilyCount, status, exit);
     vkGetPhysicalDeviceQueueFamilyProperties(physDevice, &queueFamilyCount, queueFamilies);
     pDeviceInfo->pName   = pDeviceInfo->handle->props.deviceName;
 
@@ -198,8 +194,7 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
         };
 
     uint32_t extCount = 0;
-    extensions = malloc(sizeof(const char *) * 8);
-    PH_CHECK_GOTO(PH_LOG_ERROR, extensions, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, extensions, sizeof(const char *) * 8, status, exit);
 
     if (caps.swapchain)
         extensions[extCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
@@ -294,13 +289,11 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhD
 
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumeratePhysicalDevices(hInstance->instance, &physDeviceCount, NULL), 
         status, exit);
-    pPhysicalDevices = malloc(sizeof(VkPhysicalDevice) * physDeviceCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, pPhysicalDevices != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, pPhysicalDevices, sizeof(VkPhysicalDevice) * physDeviceCount, status, exit);
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumeratePhysicalDevices(hInstance->instance, &physDeviceCount, pPhysicalDevices),
         status, exit);
 
-    pDeviceInfos = malloc(sizeof(PhDeviceInfo) * physDeviceCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, pDeviceInfos != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, pDeviceInfos, sizeof(PhDeviceInfo) * physDeviceCount, status, exit);
 
     for (size_t i = 0; i < physDeviceCount; i++)
     {
@@ -308,9 +301,6 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhD
         PH_PROPAGATE_GOTO(PH_LOG_ERROR, _phys_device_meets_requirements(pPhysicalDevices[i], caps, &deviceMeetsRequirements), status, exit);
         if (deviceMeetsRequirements)
         {
-            PhDevice *pDevice = malloc(sizeof(PhDevice));
-            PH_CHECK_GOTO(PH_LOG_ERROR, pDevice != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
-
             PH_PROPAGATE_GOTO(PH_LOG_ERROR, _initialize_ph_device_info(pPhysicalDevices[i], caps, &pDeviceInfos[deviceInfoCount]), status, exit);
             PH_LOG_INFO("Initialized device: %s", pDeviceInfos[deviceInfoCount].pName);
             
@@ -379,15 +369,13 @@ PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle
 
     PH_VK_CHECK(PH_LOG_ERROR, 
         vkGetPhysicalDeviceSurfaceFormatsKHR(hDevice->physDevice, hSurface, &surfaceFormatCount, NULL));
-    pSurfaceFormats = malloc(sizeof(VkSurfaceFormatKHR) * surfaceFormatCount);
-    PH_NULL_CHECK_GOTO(PH_LOG_ERROR, pSurfaceFormats, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, pSurfaceFormats, sizeof(VkSurfaceFormatKHR) * surfaceFormatCount, status, cleanup);
     PH_VK_CHECK(PH_LOG_ERROR, 
         vkGetPhysicalDeviceSurfaceFormatsKHR(hDevice->physDevice, hSurface, &surfaceFormatCount, pSurfaceFormats));
     
     PH_VK_CHECK(PH_LOG_ERROR, 
         vkGetPhysicalDeviceSurfacePresentModesKHR(hDevice->physDevice, hSurface, &presentModeCount, NULL));
-    pPresentModes = malloc(sizeof(VkPresentModeKHR) * presentModeCount);
-    PH_NULL_CHECK_GOTO(PH_LOG_ERROR, pPresentModes, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, pPresentModes, sizeof(VkPresentModeKHR) * presentModeCount, status, cleanup);
     PH_VK_CHECK(PH_LOG_ERROR, 
         vkGetPhysicalDeviceSurfacePresentModesKHR(hDevice->physDevice, hSurface, &presentModeCount, pPresentModes));
 
@@ -446,14 +434,12 @@ PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle
     PH_VK_CHECK_GOTO(PH_LOG_ERROR,
         vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, NULL),
         status, cleanup);
-    hDevice->pSwapchainImages = malloc(sizeof(VkImage) * hDevice->swapchainImageCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImages, PH_ERR_OUT_OF_MEMORY, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImages, sizeof(VkImage) * hDevice->swapchainImageCount, status, cleanup);
     PH_VK_CHECK_GOTO(PH_LOG_ERROR,
         vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, hDevice->pSwapchainImages),
         status, cleanup);
 
-    hDevice->pSwapchainImageViews = malloc(sizeof(VkImageView) * hDevice->swapchainImageCount);
-    PH_CHECK_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImageViews, PH_ERR_OUT_OF_MEMORY, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImageViews, sizeof(VkImageView) * hDevice->swapchainImageCount, status, cleanup);
 
     for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
     {

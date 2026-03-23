@@ -21,8 +21,7 @@ PhStatus ph_create_shader_module(PhDeviceHandle hDevice, const char *path, VkSha
     long size = ftell(f);
     rewind(f);
 
-    code = malloc((size_t)size);
-    PH_CHECK_GOTO(PH_LOG_ERROR, code != NULL, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, code, (size_t)size, status, exit);
     PH_CHECK_GOTO(PH_LOG_ERROR, fread(code, 1, (size_t)size, f) == (size_t)size, PH_ERR_UNKNOWN, status, exit);
 
     VkShaderModuleCreateInfo info = {

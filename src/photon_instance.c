@@ -74,12 +74,10 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
     if (settings->enableDebug)
     {
         PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateInstanceLayerProperties(&vkLayerCount, NULL), status, exit);
-        pLayerProperties = malloc(sizeof(VkLayerProperties) * vkLayerCount);
-        PH_CHECK_GOTO(PH_LOG_ERROR, pLayerProperties, PH_ERR_OUT_OF_MEMORY, status, exit);
+        PH_MALLOC_GOTO(PH_LOG_ERROR, pLayerProperties, sizeof(VkLayerProperties) * vkLayerCount, status, exit);
         PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateInstanceLayerProperties(&vkLayerCount, pLayerProperties), status, exit);
 
-        ppLayerNames = malloc(sizeof(char *) * PH_NUM_ELEMS(s_validationLayers));
-        PH_CHECK_GOTO(PH_LOG_ERROR, ppLayerNames, PH_ERR_OUT_OF_MEMORY, status, exit);
+        PH_MALLOC_GOTO(PH_LOG_ERROR, ppLayerNames, sizeof(char *) * PH_NUM_ELEMS(s_validationLayers), status, exit);
 
         PH_LOG_INFO("Validation layers:");
         for (uint32_t i = 0; i < vkLayerCount; i++)
@@ -97,8 +95,7 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
     PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_get_required_extensions(NULL, &windowExtensionCount), status, exit);
 
     uint32_t extraExtensions = settings->enableDebug ? 1 : 0; /* debug utils */
-    ppExtensionNames = malloc(sizeof(char *) * (windowExtensionCount + extraExtensions));
-    PH_CHECK_GOTO(PH_LOG_ERROR, ppExtensionNames, PH_ERR_OUT_OF_MEMORY, status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, ppExtensionNames, sizeof(char *) * (windowExtensionCount + extraExtensions), status, exit);
 
     PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_get_required_extensions(ppExtensionNames, &windowExtensionCount), status, exit);
     enabledExtensionCount = windowExtensionCount;

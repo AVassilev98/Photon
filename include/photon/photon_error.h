@@ -127,6 +127,37 @@
         }                                                                       \
     } while (0)
 
+/*
+ * PH_MALLOC(level, ptr, size)
+ *   Allocate size bytes into ptr. On OOM, log at level and return PH_ERR_OUT_OF_MEMORY.
+ *
+ *   MyStruct *p;
+ *   PH_MALLOC(PH_LOG_ERROR, p, sizeof(MyStruct));
+ */
+#define PH_MALLOC(level, ptr, size)                                             \
+    do {                                                                        \
+        (ptr) = malloc(size);                                                   \
+        if (!(ptr)) {                                                           \
+            ph_log(level, __FILE__, __LINE__, "malloc failed: " #ptr);          \
+            return PH_ERR_OUT_OF_MEMORY;                                        \
+        }                                                                       \
+    } while (0)
+
+/*
+ * PH_MALLOC_GOTO(level, ptr, size, out, label)
+ *   Like PH_MALLOC but jumps to label instead of returning.
+ *   Writes PH_ERR_OUT_OF_MEMORY into out.
+ */
+#define PH_MALLOC_GOTO(level, ptr, size, out, label)                            \
+    do {                                                                        \
+        (ptr) = malloc(size);                                                   \
+        if (!(ptr)) {                                                           \
+            ph_log(level, __FILE__, __LINE__, "malloc failed: " #ptr);          \
+            (out) = PH_ERR_OUT_OF_MEMORY;                                       \
+            goto label;                                                         \
+        }                                                                       \
+    } while (0)
+
 #define PH_NUM_ELEMS(arr)                                                       \
     (sizeof(arr) / sizeof(*arr))
 
