@@ -332,6 +332,7 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhD
             deviceInfoCount++;
         }
     }
+    PH_CHECK_GOTO(PH_LOG_ERROR, deviceInfoCount > 0, PH_ERR_NOT_FOUND, status, exit);
 
 exit:
     PH_FREE_IF_SET(pPhysicalDevices);

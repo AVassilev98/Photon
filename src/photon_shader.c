@@ -70,7 +70,7 @@ PhStatus ph_create_shader_module(PhDeviceHandle hDevice, const char *path, PhSha
             .sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage  = (VkShaderStageFlagBits)reflect.entry_points[i].shader_stage,
             .module = out->vkModule,
-            .pName  = reflect.entry_points[i].name,
+            .pName  = strdup(reflect.entry_points[i].name),
         };
     }
 
@@ -93,6 +93,8 @@ PhStatus ph_destroy_shader_module(PhDeviceHandle hDevice, PhShaderModule *module
     PH_NULL_CHECK(PH_LOG_ERROR, module);
 
     vkDestroyShaderModule(hDevice->device, module->vkModule, NULL);
+    for (uint32_t i = 0; i < module->stageCount; i++)
+        PH_FREE_IF_SET((void *)module->pStages[i].pName);
     PH_FREE_IF_SET(module->pStages);
     module->vkModule    = VK_NULL_HANDLE;
     module->stageCount  = 0;

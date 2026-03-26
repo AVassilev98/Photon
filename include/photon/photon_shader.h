@@ -1,9 +1,8 @@
 #pragma once
 
 #include "photon_status.h"
+#include "photon_device.h"
 #include <vulkan/vulkan.h>
-
-typedef struct PhDevice *PhDeviceHandle;
 
 typedef struct PhShaderModule
 {
