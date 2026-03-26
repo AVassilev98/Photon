@@ -107,4 +107,13 @@ typedef struct PhGraphicsPipelineOptions
 
 
 
-PhStatus ph_create_graphics_pipeline(PhDeviceHandle hDevice, PhGraphicsPipelineOptions options, VkPipeline *out);
+typedef struct PhPipeline
+{
+    VkPipeline             pipeline;
+    VkPipelineLayout       layout;
+    VkDescriptorSetLayout *pSetLayouts;
+    uint32_t               setLayoutCount;
+} PhPipeline;
+
+PhStatus ph_create_graphics_pipeline(PhDeviceHandle hDevice, PhGraphicsPipelineOptions options, PhPipeline *out);
+PhStatus ph_destroy_pipeline(PhDeviceHandle hDevice, PhPipeline *pipeline);

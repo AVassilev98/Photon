@@ -15,7 +15,7 @@ int main(void) {
     PhDeviceHandle chosenDevice                 = { 0 };
     PhShaderModule triangleShader               = { 0 };
     PhGraphicsPipelineOptions pipelineOptions   = PH_PIPELINE_OPTIONS_DEFAULT;
-    VkPipeline pipeline                         = { 0 };
+    PhPipeline pipeline                         = { 0 };
 
     PhInstanceSettings instanceSettings = {
         .appName = "Photon",

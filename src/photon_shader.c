@@ -34,11 +34,13 @@ exit:
 
 PhStatus ph_create_shader_module(PhDeviceHandle hDevice, const char *path, PhShaderModule *out)
 {
-    PhStatus               status  = PH_SUCCESS;
-    uint8_t               *code    = NULL;
-    size_t                 size    = 0;
-    SpvReflectShaderModule reflect = {0};
-    bool                   reflected = false;
+    PhStatus                      status       = PH_SUCCESS;
+    uint8_t                      *code         = NULL;
+    size_t                        size         = 0;
+    SpvReflectShaderModule        reflect      = {0};
+    bool                          reflected    = false;
+    SpvReflectDescriptorBinding **ppSpvBindings = NULL;
+    SpvReflectBlockVariable     **ppPushBlocks  = NULL;
 
     PH_NULL_CHECK(PH_LOG_ERROR, hDevice);
     PH_NULL_CHECK(PH_LOG_ERROR, path);
@@ -74,7 +76,58 @@ PhStatus ph_create_shader_module(PhDeviceHandle hDevice, const char *path, PhSha
         };
     }
 
+    VkShaderStageFlags moduleStageFlags = 0;
+    for (uint32_t i = 0; i < reflect.entry_point_count; i++)
+        moduleStageFlags |= (VkShaderStageFlags)reflect.entry_points[i].shader_stage;
+
+    uint32_t bindingCount = 0;
+    spvReflectEnumerateDescriptorBindings(&reflect, &bindingCount, NULL);
+    if (bindingCount > 0)
+    {
+        ppSpvBindings = malloc(sizeof(SpvReflectDescriptorBinding *) * bindingCount);
+        PH_CHECK_GOTO(PH_LOG_ERROR, ppSpvBindings, PH_ERR_OUT_OF_MEMORY, status, exit);
+        spvReflectEnumerateDescriptorBindings(&reflect, &bindingCount, ppSpvBindings);
+
+        PH_MALLOC_GOTO(PH_LOG_ERROR, out->pBindings,    sizeof(VkDescriptorSetLayoutBinding) * bindingCount, status, exit);
+        PH_MALLOC_GOTO(PH_LOG_ERROR, out->pBindingSets, sizeof(uint32_t) * bindingCount,                     status, exit);
+        out->bindingCount = bindingCount;
+
+        for (uint32_t i = 0; i < bindingCount; i++)
+        {
+            out->pBindingSets[i] = ppSpvBindings[i]->set;
+            out->pBindings[i]   = (VkDescriptorSetLayoutBinding){
+                .binding         = ppSpvBindings[i]->binding,
+                .descriptorType  = (VkDescriptorType)ppSpvBindings[i]->descriptor_type,
+                .descriptorCount = ppSpvBindings[i]->count,
+                .stageFlags      = moduleStageFlags,
+            };
+        }
+    }
+
+    uint32_t pushCount = 0;
+    spvReflectEnumeratePushConstantBlocks(&reflect, &pushCount, NULL);
+    if (pushCount > 0)
+    {
+        ppPushBlocks = malloc(sizeof(SpvReflectBlockVariable *) * pushCount);
+        PH_CHECK_GOTO(PH_LOG_ERROR, ppPushBlocks, PH_ERR_OUT_OF_MEMORY, status, exit);
+        spvReflectEnumeratePushConstantBlocks(&reflect, &pushCount, ppPushBlocks);
+
+        PH_MALLOC_GOTO(PH_LOG_ERROR, out->pPushConstantRanges, sizeof(VkPushConstantRange) * pushCount, status, exit);
+        out->pushConstantRangeCount = pushCount;
+
+        for (uint32_t i = 0; i < pushCount; i++)
+        {
+            out->pPushConstantRanges[i] = (VkPushConstantRange){
+                .stageFlags = moduleStageFlags,
+                .offset     = ppPushBlocks[i]->offset,
+                .size       = ppPushBlocks[i]->size,
+            };
+        }
+    }
+
 exit:
+    PH_FREE_IF_SET(ppSpvBindings);
+    PH_FREE_IF_SET(ppPushBlocks);
     if (reflected)
         spvReflectDestroyShaderModule(&reflect);
     PH_FREE_IF_SET(code);
@@ -83,6 +136,9 @@ exit:
         if (out->vkModule)
             vkDestroyShaderModule(hDevice->device, out->vkModule, NULL);
         PH_FREE_IF_SET(out->pStages);
+        PH_FREE_IF_SET(out->pBindings);
+        PH_FREE_IF_SET(out->pBindingSets);
+        PH_FREE_IF_SET(out->pPushConstantRanges);
     }
     return status;
 }
@@ -96,7 +152,9 @@ PhStatus ph_destroy_shader_module(PhDeviceHandle hDevice, PhShaderModule *module
     for (uint32_t i = 0; i < module->stageCount; i++)
         PH_FREE_IF_SET((void *)module->pStages[i].pName);
     PH_FREE_IF_SET(module->pStages);
-    module->vkModule    = VK_NULL_HANDLE;
-    module->stageCount  = 0;
+    PH_FREE_IF_SET(module->pBindings);
+    PH_FREE_IF_SET(module->pBindingSets);
+    PH_FREE_IF_SET(module->pPushConstantRanges);
+    *module = (PhShaderModule){0};
     return PH_SUCCESS;
 }
