@@ -159,10 +159,10 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
 
     PH_NULL_CHECK(PH_LOG_ERROR, pDeviceInfo);
     *pDeviceInfo = (PhDeviceInfo){ 0 };
-
     pDeviceInfo->capabilities         = caps;
     
     PH_MALLOC_GOTO(PH_LOG_ERROR, pDeviceInfo->handle, sizeof(PhDevice), status, exit);
+    memset(pDeviceInfo->handle, 0, sizeof(PhDevice));
 
     pDeviceInfo->handle->physDevice   = physDevice;
     vkGetPhysicalDeviceProperties(physDevice, &pDeviceInfo->handle->props);
@@ -363,6 +363,7 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhD
         status, exit);
 
     PH_MALLOC_GOTO(PH_LOG_ERROR, pDeviceInfos, sizeof(PhDeviceInfo) * physDeviceCount, status, exit);
+    memset(pDeviceInfos, 0, sizeof(PhDeviceInfo) * physDeviceCount);
 
     for (size_t i = 0; i < physDeviceCount; i++)
     {
@@ -563,7 +564,7 @@ cleanup:
     return status;
 }
 
-PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers)
+PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers)
 {
     VkCommandPool commandPool = { 0 };
     VkCommandBufferAllocateInfo bufferAllocateInfo = { 0 };
@@ -572,13 +573,13 @@ PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhCommandBuffer
     
     switch (type)
     {
-        case PH_COMMAND_BUFFER_TYPE_GRAPHICS:
+        case PH_QUEUE_TYPE_GRAPHICS:
             commandPool = hDevice->graphicsPool;
             break;
-        case PH_COMMAND_BUFFER_TYPE_COMPUTE:
+        case PH_QUEUE_TYPE_COMPUTE:
             commandPool = hDevice->computePool;
             break;
-        case PH_COMMAND_BUFFER_TYPE_TRANSFER:
+        case PH_QUEUE_TYPE_TRANSFER:
             commandPool = hDevice->transferPool;
             break;
     };
@@ -594,20 +595,37 @@ PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhCommandBuffer
     return PH_SUCCESS;
 }
 
-PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers)
+PhStatus ph_device_semaphore_create(PhDeviceHandle hDevice, PhSemaphore *out)
+{
+    const static VkSemaphoreCreateInfo semaphoreCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, out));
+    return PH_SUCCESS;
+}
+PhStatus ph_device_semaphore_destroy(PhDeviceHandle hDevice, PhSemaphore sem)
+{
+    vkDestroySemaphore(hDevice->device, sem, NULL);
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers)
 {
     VkCommandPool commandPool = { 0 };
     VkCommandBufferAllocateInfo bufferAllocateInfo = { 0 };
     
     switch (type)
     {
-        case PH_COMMAND_BUFFER_TYPE_GRAPHICS:
+        case PH_QUEUE_TYPE_GRAPHICS:
             commandPool = hDevice->graphicsPool;
             break;
-        case PH_COMMAND_BUFFER_TYPE_COMPUTE:
+        case PH_QUEUE_TYPE_COMPUTE:
             commandPool = hDevice->computePool;
             break;
-        case PH_COMMAND_BUFFER_TYPE_TRANSFER:
+        case PH_QUEUE_TYPE_TRANSFER:
             commandPool = hDevice->transferPool;
             break;
     };
@@ -616,13 +634,13 @@ PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhCommandBuffe
     return PH_SUCCESS;
 }
 
-PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline)
+PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image)
 {
-    static size_t frame = 0;
-    PhCommandBuffer buffer = { 0 };
-    size_t currentImageIndex = frame % hDevice->swapchainImageCount;
+    size_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
     uint32_t imageIndex = 0;
 
+    PH_NULL_CHECK(PH_LOG_ERROR, image);
+    
     PH_VK_CHECK(PH_LOG_ERROR,
         vkWaitForFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex], VK_TRUE, UINT64_MAX));
     PH_VK_CHECK(PH_LOG_ERROR,
@@ -630,73 +648,52 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline)
 
     PH_VK_CHECK(PH_LOG_ERROR,
         vkAcquireNextImageKHR(hDevice->device, hDevice->swapchain, UINT64_MAX, hDevice->pPresentSemaphores[currentImageIndex], VK_NULL_HANDLE, &imageIndex));
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, imageIndex == currentImageIndex, PH_ERR_INVALID_STATE);
 
-    PH_CHECK(PH_LOG_ERROR, ph_device_command_buffer_create(hDevice, PH_COMMAND_BUFFER_TYPE_GRAPHICS, 1, &buffer));
+    *image = (PhImage) {
+        .image = hDevice->pSwapchainImages[imageIndex],
+        .defaultView = hDevice->pSwapchainImageViews[imageIndex],
+        .extent = hDevice->swapchainExtent,
+        .readySemaphore = hDevice->pPresentSemaphores[imageIndex],
+    };
 
-    VkCommandBufferBeginInfo beginInfo = {
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_queue_submit(PhDeviceHandle hDevice, PhQueueType type, PhQueueSubmitInfo *submitInfo)
+{
+    VkQueue queue = NULL;
+    switch (type)
+    {
+        case PH_QUEUE_TYPE_GRAPHICS:
+            queue = hDevice->graphicsQueue;
+            break;
+        case PH_QUEUE_TYPE_TRANSFER:
+            queue = hDevice->transferQueue;
+            break;
+        case PH_QUEUE_TYPE_COMPUTE:
+            queue = hDevice->computeQueue;
+            break;
+    }
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkQueueSubmit(queue, 1UL, submitInfo, NULL));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores, size_t numSemaphores)
+{
+    uint32_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
+    PhCommandBuffer buffer;
+
+    ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_GRAPHICS, 1, &buffer);
+    
+    VkCommandBufferBeginInfo bufferBeginInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = NULL,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    PH_VK_CHECK(PH_LOG_ERROR, vkBeginCommandBuffer(buffer, &beginInfo));
 
-    VkImageMemoryBarrier toRender = {
-        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask       = 0,
-        .dstAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout           = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image               = hDevice->pSwapchainImages[imageIndex],
-        .subresourceRange    = {
-            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel   = 0,
-            .levelCount     = 1,
-            .baseArrayLayer = 0,
-            .layerCount     = 1,
-        },
-    };
-    vkCmdPipelineBarrier(buffer,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        0, 0, NULL, 0, NULL, 1, &toRender);
-
-    VkRenderingAttachmentInfo colorAttachment = {
-        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView   = hDevice->pSwapchainImageViews[imageIndex],
-        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue  = { .color = { .float32 = { 0.0f, 0.0f, 0.0f, 1.0f } } },
-    };
-    VkRenderingInfo renderingInfo = {
-        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea           = { .offset = { 0, 0 }, .extent = hDevice->swapchainExtent },
-        .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &colorAttachment,
-    };
-
-    vkCmdBeginRendering(buffer, &renderingInfo);
-
-    vkCmdBindPipeline(buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pPipeline->pipeline);
-
-    VkViewport viewport = {
-        .x        = 0.0f,
-        .y        = 0.0f,
-        .width    = (float)hDevice->swapchainExtent.width,
-        .height   = (float)hDevice->swapchainExtent.height,
-        .minDepth = 0.0f,
-        .maxDepth = 1.0f,
-    };
-    vkCmdSetViewport(buffer, 0, 1, &viewport);
-
-    VkRect2D scissor = { .offset = { 0, 0 }, .extent = hDevice->swapchainExtent };
-    vkCmdSetScissor(buffer, 0, 1, &scissor);
-
-    vkCmdDraw(buffer, 3, 1, 0, 0);
-
-    vkCmdEndRendering(buffer);
-
+    PH_VK_CHECK(PH_LOG_ERROR, vkBeginCommandBuffer(buffer, &bufferBeginInfo));
     VkImageMemoryBarrier toPresent = {
         .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -705,7 +702,7 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline)
         .newLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image               = hDevice->pSwapchainImages[imageIndex],
+        .image               = hDevice->pSwapchainImages[currentImageIndex],
         .subresourceRange    = {
             .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
             .baseMipLevel   = 0,
@@ -724,14 +721,15 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline)
     VkSubmitInfo submitInfo = {
         .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext                = NULL,
-        .waitSemaphoreCount   = 1,
-        .pWaitSemaphores      = &hDevice->pPresentSemaphores[currentImageIndex],
+        .waitSemaphoreCount   = numSemaphores,
+        .pWaitSemaphores      = pWaitSemaphores,
         .pWaitDstStageMask    = &waitStage,
         .commandBufferCount   = 1,
         .pCommandBuffers      = &buffer,
         .signalSemaphoreCount = 1,
         .pSignalSemaphores    = &hDevice->pRenderSemaphores[currentImageIndex],
     };
+    
     PH_VK_CHECK(PH_LOG_ERROR,
         vkQueueSubmit(hDevice->graphicsQueue, 1, &submitInfo, hDevice->pPresentFences[currentImageIndex]));
 
@@ -742,11 +740,11 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline)
         .pWaitSemaphores    = &hDevice->pRenderSemaphores[currentImageIndex],
         .swapchainCount     = 1,
         .pSwapchains        = &hDevice->swapchain,
-        .pImageIndices      = &imageIndex,
+        .pImageIndices      = &currentImageIndex,
     };
     PH_VK_CHECK(PH_LOG_ERROR,
         vkQueuePresentKHR(hDevice->graphicsQueue, &presentInfo));
 
-    frame++;
+    hDevice->frame++;
     return PH_SUCCESS;
 }

@@ -6,11 +6,21 @@
 
 typedef struct PhDevice *PhDeviceHandle;
 typedef VkCommandBuffer PhCommandBuffer;
-typedef enum PhCommandBufferType {
-    PH_COMMAND_BUFFER_TYPE_GRAPHICS,
-    PH_COMMAND_BUFFER_TYPE_COMPUTE,
-    PH_COMMAND_BUFFER_TYPE_TRANSFER,
-} PhCommandBufferType;
+typedef VkSubmitInfo    PhQueueSubmitInfo;
+
+typedef struct PhImage {
+    VkImageView defaultView;
+    VkImage     image;
+    VkExtent2D  extent;
+    VkSemaphore readySemaphore;
+} PhImage;
+typedef VkSemaphore     PhSemaphore;
+
+typedef enum PhQueueType {
+    PH_QUEUE_TYPE_GRAPHICS,
+    PH_QUEUE_TYPE_COMPUTE,
+    PH_QUEUE_TYPE_TRANSFER,
+} PhQueueType;
 
 typedef struct PhCapability {
     uint32_t discrete               : 1;
@@ -56,6 +66,10 @@ struct PhPipeline;
 
 PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
 PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
-PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers);
-PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers);
-PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline);
+PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers);
+PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers);
+PhStatus ph_device_semaphore_create(PhDeviceHandle hDevice, PhSemaphore *out);
+PhStatus ph_device_semaphore_destroy(PhDeviceHandle hDevice, PhSemaphore sem);
+PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image);
+PhStatus ph_device_queue_submit(PhDeviceHandle handle, PhQueueType type, PhQueueSubmitInfo *submitInfo);
+PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores, size_t numSemaphores);

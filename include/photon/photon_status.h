@@ -28,6 +28,7 @@ typedef enum PhStatus
     PH_ERR_PIPELINE_COMPILE,        /* pipeline creation failed                 */
     PH_ERR_TIMEOUT,                 /* fence/semaphore wait timed out           */
     PH_ERR_SYNC_OBJECT_INVALID,
+    PH_ERR_INVALID_STATE,
 
 } PhStatus;
 

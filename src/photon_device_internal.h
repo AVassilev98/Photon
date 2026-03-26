@@ -23,5 +23,5 @@ typedef struct PhDevice {
     uint32_t                   swapchainImageCount;
     VkFormat                   swapchainFormat;
     VkExtent2D                 swapchainExtent;
-
+    size_t                     frame;
 } PhDevice;
