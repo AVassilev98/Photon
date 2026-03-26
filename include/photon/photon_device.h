@@ -5,6 +5,12 @@
 #include "foundation/span.h"
 
 typedef struct PhDevice *PhDeviceHandle;
+typedef VkCommandBuffer PhCommandBuffer;
+typedef enum PhCommandBufferType {
+    PH_COMMAND_BUFFER_TYPE_GRAPHICS,
+    PH_COMMAND_BUFFER_TYPE_COMPUTE,
+    PH_COMMAND_BUFFER_TYPE_TRANSFER,
+} PhCommandBufferType;
 
 typedef struct PhCapability {
     uint32_t discrete               : 1;
@@ -46,6 +52,10 @@ typedef struct PhDeviceInfo {
 } PhDeviceInfo;
 FDN_SPAN_DEFINE(PhDeviceInfo, PhDeviceInfoSpan)
 
+struct PhPipeline;
 
 PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
 PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
+PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers);
+PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers);
+PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline);

@@ -11,10 +11,17 @@ typedef struct PhDevice {
     VkQueue                    graphicsQueue;
     VkQueue                    computeQueue;
     VkQueue                    transferQueue;
+    VkCommandPool              graphicsPool;
+    VkCommandPool              computePool;
+    VkCommandPool              transferPool;
     VkSwapchainKHR             swapchain;
     VkImage                   *pSwapchainImages;
     VkImageView               *pSwapchainImageViews;
+    VkSemaphore               *pPresentSemaphores;
+    VkSemaphore               *pRenderSemaphores;
+    VkFence                   *pPresentFences;
     uint32_t                   swapchainImageCount;
     VkFormat                   swapchainFormat;
     VkExtent2D                 swapchainExtent;
+
 } PhDevice;

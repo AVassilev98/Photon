@@ -55,7 +55,7 @@ typedef struct PhGraphicsPipelineOptions
     .rasterizerDiscardEnable = VK_FALSE,                                                    \
     .polygonMode             = VK_POLYGON_MODE_FILL,                                        \
     .cullMode                = VK_CULL_MODE_BACK_BIT,                                       \
-    .frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE,                             \
+    .frontFace               = VK_FRONT_FACE_CLOCKWISE,                                     \
     .depthBiasEnable         = VK_FALSE,                                                    \
     .lineWidth               = 1.0f,                                                        \
 }
@@ -72,8 +72,8 @@ typedef struct PhGraphicsPipelineOptions
 
 #define PH_DEPTH_STENCIL_OPTIONS_DEFAULT (PhDepthStencilOptions) {                          \
     .sType                 = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,    \
-    .depthTestEnable       = VK_TRUE,                                                       \
-    .depthWriteEnable      = VK_TRUE,                                                       \
+    .depthTestEnable       = VK_FALSE,                                                      \
+    .depthWriteEnable      = VK_FALSE,                                                      \
     .depthCompareOp        = VK_COMPARE_OP_LESS,                                            \
     .depthBoundsTestEnable = VK_FALSE,                                                      \
     .stencilTestEnable     = VK_FALSE,                                                      \
@@ -82,7 +82,9 @@ typedef struct PhGraphicsPipelineOptions
 }
 
 #define PH_COLOR_BLEND_ATTACHMENT_OPTIONS_DEFAULT (PhColorBlendAttachmentOptions) {         \
-    .blendEnable = VK_FALSE,                                                                \
+    .blendEnable    = VK_FALSE,                                                             \
+    .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |                \
+                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,                 \
 }
 
 #define PH_COLOR_BLEND_OPTIONS_DEFAULT (PhColorBlendOptions) {                              \
@@ -100,6 +102,7 @@ typedef struct PhGraphicsPipelineOptions
     .rasterStateInfo        = PH_RASTERIZATION_OPTIONS_DEFAULT,                             \
     .multisampleStateInfo   = PH_MULTI_SAMPLE_OPTIONS_DEFAULT,                              \
     .stencilStateInfo       = PH_DEPTH_STENCIL_OPTIONS_DEFAULT,                             \
+    .colorBlendInfo         = PH_COLOR_BLEND_OPTIONS_DEFAULT,                               \
     .pShaders               = NULL,                                                         \
     .shaderCount            = 0UL                                                           \
 }

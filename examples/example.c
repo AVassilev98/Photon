@@ -64,14 +64,21 @@ int main(void) {
     PH_CHECK(PH_LOG_ERROR, ph_window_get_surface(hWindow, &hSurface));
     chosenDevice = deviceInfos.ptr[0].handle;
     PH_CHECK(PH_LOG_ERROR, ph_configure_device_for_present(chosenDevice, hSurface, presentOptions));
-    ph_create_shader_module(deviceInfos.ptr[0].handle, SHADER_DIR "/triangle.spv", &triangleShader);
+    PH_CHECK(PH_LOG_ERROR, ph_create_shader_module(deviceInfos.ptr[0].handle, SHADER_DIR "/triangle.spv", &triangleShader));
 
-    pipelineOptions.pShaders    = &triangleShader;
-    pipelineOptions.shaderCount = 1UL;
-    ph_create_graphics_pipeline(chosenDevice, pipelineOptions, &pipeline);
+    VkFormat colorFormat = VK_FORMAT_B8G8R8A8_SRGB;
+    PhColorBlendAttachmentOptions blendAttachment = PH_COLOR_BLEND_ATTACHMENT_OPTIONS_DEFAULT;
+
+    pipelineOptions.pShaders                = &triangleShader;
+    pipelineOptions.shaderCount             = 1UL;
+    pipelineOptions.pColorAttachmentFormats = &colorFormat;
+    pipelineOptions.colorAttachmentCount    = 1;
+    pipelineOptions.pColorBlendAttachments  = &blendAttachment;
+    PH_CHECK(PH_LOG_ERROR, ph_create_graphics_pipeline(chosenDevice, pipelineOptions, &pipeline));
 
     while(!ph_window_should_close(hWindow))
     {
+        ph_device_present(chosenDevice, &pipeline);
         ph_window_poll_events(hWindow);
     }
 

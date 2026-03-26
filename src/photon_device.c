@@ -1,8 +1,11 @@
+#include "photon/photon_device.h"
+#include "photon/photon_pipeline.h"
 #include "photon_device_internal.h"
 #include "photon_instance_internal.h"
 #include "photon/photon_error.h"
 #include "photon/photon_log.h"
 #include "photon/photon_status.h"
+#include <stdint.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_beta.h>
 #include "stdlib.h"
@@ -177,38 +180,76 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
     {
         VkQueueFlags f = queueFamilies[i].queueFlags;
         if (graphicsFamily == UINT32_MAX && (f & VK_QUEUE_GRAPHICS_BIT))
+        {
             graphicsFamily = i;
-        if (computeFamily == UINT32_MAX && (f & VK_QUEUE_COMPUTE_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT))
+            if (computeFamily == UINT32_MAX && (f & VK_QUEUE_COMPUTE_BIT))
+            {
+                computeFamily = i;
+            }
+            if (transferFamily == UINT32_MAX && (f & VK_QUEUE_TRANSFER_BIT))
+            {
+                transferFamily = i;
+            }
+        }
+        if ((f & VK_QUEUE_COMPUTE_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT))
             computeFamily = i;
-        if (transferFamily == UINT32_MAX && (f & VK_QUEUE_TRANSFER_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT) && !(f & VK_QUEUE_COMPUTE_BIT))
+        if ((f & VK_QUEUE_TRANSFER_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT) && !(f & VK_QUEUE_COMPUTE_BIT))
             transferFamily = i;
     }
 
     float                  queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueInfos[3];
+    VkCommandPoolCreateInfo commandPoolInfos[3];
     uint32_t                queueInfoCount = 0;
 
     if (graphicsFamily != UINT32_MAX)
-        queueInfos[queueInfoCount++] = (VkDeviceQueueCreateInfo){
+    {
+        queueInfos[queueInfoCount] = (VkDeviceQueueCreateInfo){
             .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = graphicsFamily,
             .queueCount       = 1,
             .pQueuePriorities = &queuePriority,
         };
+        commandPoolInfos[queueInfoCount] = (VkCommandPoolCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = NULL,
+            .queueFamilyIndex = graphicsFamily,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        };
+        queueInfoCount++;
+    }
     if (computeFamily != UINT32_MAX)
-        queueInfos[queueInfoCount++] = (VkDeviceQueueCreateInfo){
+    {
+        queueInfos[queueInfoCount] = (VkDeviceQueueCreateInfo){
             .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = computeFamily,
             .queueCount       = 1,
             .pQueuePriorities = &queuePriority,
         };
+        commandPoolInfos[queueInfoCount] = (VkCommandPoolCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = NULL,
+            .queueFamilyIndex = computeFamily,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        };
+        queueInfoCount++;
+    }
     if (transferFamily != UINT32_MAX)
-        queueInfos[queueInfoCount++] = (VkDeviceQueueCreateInfo){
+    {
+        queueInfos[queueInfoCount] = (VkDeviceQueueCreateInfo){
             .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = transferFamily,
             .queueCount       = 1,
             .pQueuePriorities = &queuePriority,
         };
+        commandPoolInfos[queueInfoCount] = (VkCommandPoolCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = NULL,
+            .queueFamilyIndex = transferFamily,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        };
+        queueInfoCount++;
+    }
 
     uint32_t availExtCount = 0;
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateDeviceExtensionProperties(physDevice, NULL, &availExtCount, NULL), status, exit);
@@ -284,13 +325,16 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
     };
 
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateDevice(physDevice, &deviceInfo, NULL, &pDeviceInfo->handle->device), status, exit);
+    
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[0], NULL, &pDeviceInfo->handle->graphicsPool), status, exit);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[1], NULL, &pDeviceInfo->handle->computePool), status, exit);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[2], NULL, &pDeviceInfo->handle->transferPool), status, exit);
 
     vkGetDeviceQueue(pDeviceInfo->handle->device, graphicsFamily, 0, &pDeviceInfo->handle->graphicsQueue);
     if (computeFamily  != UINT32_MAX)
         vkGetDeviceQueue(pDeviceInfo->handle->device, computeFamily,  0, &pDeviceInfo->handle->computeQueue);
     if (transferFamily != UINT32_MAX)
         vkGetDeviceQueue(pDeviceInfo->handle->device, transferFamily, 0, &pDeviceInfo->handle->transferQueue);
-
 exit:
     if (status != PH_SUCCESS)
     {
@@ -466,6 +510,9 @@ PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle
         status, cleanup);
 
     PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImageViews, sizeof(VkImageView) * hDevice->swapchainImageCount, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pPresentSemaphores, sizeof(VkSemaphore) * hDevice->swapchainImageCount, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pRenderSemaphores,  sizeof(VkSemaphore) * hDevice->swapchainImageCount, status, cleanup);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pPresentFences, sizeof(VkFence) * hDevice->swapchainImageCount, status, cleanup);
 
     for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
     {
@@ -491,10 +538,215 @@ PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle
         PH_VK_CHECK_GOTO(PH_LOG_ERROR,
             vkCreateImageView(hDevice->device, &viewInfo, NULL, &hDevice->pSwapchainImageViews[i]),
             status, cleanup);
+
+        VkSemaphoreCreateInfo semaphoreCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .flags = 0,
+            .pNext = NULL,
+        };
+        VkFenceCreateInfo fenceCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+            .pNext = NULL,
+        };
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pPresentSemaphores[i]), status, cleanup);
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pRenderSemaphores[i]), status, cleanup);
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkCreateFence(hDevice->device, &fenceCreateInfo, NULL, &hDevice->pPresentFences[i]), status, cleanup);
     }
 
 cleanup:
     PH_FREE_IF_SET(pSurfaceFormats);
     PH_FREE_IF_SET(pPresentModes);
     return status;
+}
+
+PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers)
+{
+    VkCommandPool commandPool = { 0 };
+    VkCommandBufferAllocateInfo bufferAllocateInfo = { 0 };
+
+    PH_NULL_CHECK(PH_LOG_ERROR, pBuffers);
+    
+    switch (type)
+    {
+        case PH_COMMAND_BUFFER_TYPE_GRAPHICS:
+            commandPool = hDevice->graphicsPool;
+            break;
+        case PH_COMMAND_BUFFER_TYPE_COMPUTE:
+            commandPool = hDevice->computePool;
+            break;
+        case PH_COMMAND_BUFFER_TYPE_TRANSFER:
+            commandPool = hDevice->transferPool;
+            break;
+    };
+
+    bufferAllocateInfo = (VkCommandBufferAllocateInfo) {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = NULL,
+        .commandBufferCount = count,
+        .commandPool = commandPool,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkAllocateCommandBuffers(hDevice->device, &bufferAllocateInfo, pBuffers));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhCommandBufferType type, size_t count, PhCommandBuffer *pBuffers)
+{
+    VkCommandPool commandPool = { 0 };
+    VkCommandBufferAllocateInfo bufferAllocateInfo = { 0 };
+    
+    switch (type)
+    {
+        case PH_COMMAND_BUFFER_TYPE_GRAPHICS:
+            commandPool = hDevice->graphicsPool;
+            break;
+        case PH_COMMAND_BUFFER_TYPE_COMPUTE:
+            commandPool = hDevice->computePool;
+            break;
+        case PH_COMMAND_BUFFER_TYPE_TRANSFER:
+            commandPool = hDevice->transferPool;
+            break;
+    };
+
+    vkFreeCommandBuffers(hDevice->device, commandPool, count, pBuffers);
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_present(PhDeviceHandle hDevice, struct PhPipeline *pPipeline)
+{
+    static size_t frame = 0;
+    PhCommandBuffer buffer = { 0 };
+    size_t currentImageIndex = frame % hDevice->swapchainImageCount;
+    uint32_t imageIndex = 0;
+
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkWaitForFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex], VK_TRUE, UINT64_MAX));
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkResetFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex]));
+
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkAcquireNextImageKHR(hDevice->device, hDevice->swapchain, UINT64_MAX, hDevice->pPresentSemaphores[currentImageIndex], VK_NULL_HANDLE, &imageIndex));
+
+    PH_CHECK(PH_LOG_ERROR, ph_device_command_buffer_create(hDevice, PH_COMMAND_BUFFER_TYPE_GRAPHICS, 1, &buffer));
+
+    VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    PH_VK_CHECK(PH_LOG_ERROR, vkBeginCommandBuffer(buffer, &beginInfo));
+
+    VkImageMemoryBarrier toRender = {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask       = 0,
+        .dstAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout           = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = hDevice->pSwapchainImages[imageIndex],
+        .subresourceRange    = {
+            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel   = 0,
+            .levelCount     = 1,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+    };
+    vkCmdPipelineBarrier(buffer,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        0, 0, NULL, 0, NULL, 1, &toRender);
+
+    VkRenderingAttachmentInfo colorAttachment = {
+        .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView   = hDevice->pSwapchainImageViews[imageIndex],
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue  = { .color = { .float32 = { 0.0f, 0.0f, 0.0f, 1.0f } } },
+    };
+    VkRenderingInfo renderingInfo = {
+        .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea           = { .offset = { 0, 0 }, .extent = hDevice->swapchainExtent },
+        .layerCount           = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments    = &colorAttachment,
+    };
+
+    vkCmdBeginRendering(buffer, &renderingInfo);
+
+    vkCmdBindPipeline(buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pPipeline->pipeline);
+
+    VkViewport viewport = {
+        .x        = 0.0f,
+        .y        = 0.0f,
+        .width    = (float)hDevice->swapchainExtent.width,
+        .height   = (float)hDevice->swapchainExtent.height,
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+    vkCmdSetViewport(buffer, 0, 1, &viewport);
+
+    VkRect2D scissor = { .offset = { 0, 0 }, .extent = hDevice->swapchainExtent };
+    vkCmdSetScissor(buffer, 0, 1, &scissor);
+
+    vkCmdDraw(buffer, 3, 1, 0, 0);
+
+    vkCmdEndRendering(buffer);
+
+    VkImageMemoryBarrier toPresent = {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask       = 0,
+        .oldLayout           = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .newLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = hDevice->pSwapchainImages[imageIndex],
+        .subresourceRange    = {
+            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel   = 0,
+            .levelCount     = 1,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+    };
+    vkCmdPipelineBarrier(buffer,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, NULL, 0, NULL, 1, &toPresent);
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkEndCommandBuffer(buffer));
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submitInfo = {
+        .sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext                = NULL,
+        .waitSemaphoreCount   = 1,
+        .pWaitSemaphores      = &hDevice->pPresentSemaphores[currentImageIndex],
+        .pWaitDstStageMask    = &waitStage,
+        .commandBufferCount   = 1,
+        .pCommandBuffers      = &buffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores    = &hDevice->pRenderSemaphores[currentImageIndex],
+    };
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkQueueSubmit(hDevice->graphicsQueue, 1, &submitInfo, hDevice->pPresentFences[currentImageIndex]));
+
+    VkPresentInfoKHR presentInfo = {
+        .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pNext              = NULL,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores    = &hDevice->pRenderSemaphores[currentImageIndex],
+        .swapchainCount     = 1,
+        .pSwapchains        = &hDevice->swapchain,
+        .pImageIndices      = &imageIndex,
+    };
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkQueuePresentKHR(hDevice->graphicsQueue, &presentInfo));
+
+    frame++;
+    return PH_SUCCESS;
 }
