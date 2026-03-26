@@ -95,6 +95,9 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
     PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_get_required_extensions(NULL, &windowExtensionCount), status, exit);
 
     uint32_t extraExtensions = settings->enableDebug ? 1 : 0; /* debug utils */
+#ifdef __APPLE__
+    extraExtensions += 1; /* VK_KHR_portability_enumeration */
+#endif
     PH_MALLOC_GOTO(PH_LOG_ERROR, ppExtensionNames, sizeof(char *) * (windowExtensionCount + extraExtensions), status, exit);
 
     PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_get_required_extensions(ppExtensionNames, &windowExtensionCount), status, exit);
@@ -102,6 +105,10 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
 
     if (settings->enableDebug)
         ppExtensionNames[enabledExtensionCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+
+#ifdef __APPLE__
+    ppExtensionNames[enabledExtensionCount++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+#endif
 
     VkApplicationInfo appInfo = {
         .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -114,9 +121,15 @@ PhStatus ph_create_instance(PhInstanceSettings *settings, PhInstanceHandle *out)
 
     VkDebugUtilsMessengerCreateInfoEXT messengerInfo = makeDebugMessengerInfo();
 
+    VkInstanceCreateFlags instanceFlags = 0;
+#ifdef __APPLE__
+    instanceFlags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+
     VkInstanceCreateInfo instanceInfo = {
         .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pNext                   = settings->enableDebug ? &messengerInfo : NULL,
+        .flags                   = instanceFlags,
         .pApplicationInfo        = &appInfo,
         .enabledLayerCount       = enabledLayerCount,
         .ppEnabledLayerNames     = ppLayerNames,

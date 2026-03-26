@@ -13,6 +13,35 @@ option(PHOTON_BUILD_TESTS     "Build tests"                ON)
 option(PHOTON_ENABLE_VALIDATION_DEFAULT "Enable Vulkan validation layers in debug builds" ON)
 
 # Dependencies
+if(APPLE AND NOT DEFINED ENV{VULKAN_SDK})
+    execute_process(
+        COMMAND brew --prefix vulkan-loader
+        OUTPUT_VARIABLE VULKAN_LOADER_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND brew --prefix molten-vk
+        OUTPUT_VARIABLE MOLTENVK_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND brew --prefix vulkan-headers
+        OUTPUT_VARIABLE VULKAN_HEADERS_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(VULKAN_LOADER_PREFIX)
+        set(Vulkan_LIBRARY     "${VULKAN_LOADER_PREFIX}/lib/libvulkan.dylib"  CACHE PATH "Vulkan loader library" FORCE)
+        set(Vulkan_INCLUDE_DIR "${VULKAN_HEADERS_PREFIX}/include"             CACHE PATH "Vulkan include dir"    FORCE)
+        list(APPEND CMAKE_BUILD_RPATH "${VULKAN_LOADER_PREFIX}/lib")
+    elseif(MOLTENVK_PREFIX)
+        set(Vulkan_LIBRARY     "${MOLTENVK_PREFIX}/lib/libMoltenVK.dylib" CACHE PATH "MoltenVK library"   FORCE)
+        set(Vulkan_INCLUDE_DIR "${MOLTENVK_PREFIX}/libexec/include"       CACHE PATH "MoltenVK include dir" FORCE)
+        list(APPEND CMAKE_BUILD_RPATH "${MOLTENVK_PREFIX}/lib")
+    endif()
+endif()
 find_package(Vulkan REQUIRED)
 
 include(FetchContent)

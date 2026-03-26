@@ -29,12 +29,14 @@ int main(void) {
     PH_CHECK(PH_LOG_ERROR, ph_create_window(&windowSettings, &hWindow));
 
     PhCapability deviceCaps = {
+#ifndef __APPLE__
         .asyncComputeQueue = true,
         .dedicatedTransfer = true,
+        .rtCapable = true,
+        .discrete = true,
+#endif
         .swapchain = true,
         .graphicsQueue = true,
-        .discrete = true,
-        .rtCapable = true,
         .minimumImageDimensions = {
             .height = 1080,
             .width = 1920,

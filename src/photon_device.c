@@ -4,6 +4,7 @@
 #include "photon/photon_log.h"
 #include "photon/photon_status.h"
 #include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_beta.h>
 #include "stdlib.h"
 #include "stdbool.h"
 #include "string.h"
@@ -61,42 +62,56 @@ static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhC
     PH_MALLOC_GOTO(PH_LOG_ERROR, exts, sizeof(VkExtensionProperties) * extCount, status, exit);
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateDeviceExtensionProperties(physDevice, NULL, &extCount, exts), status, exit);
 
+#define _WARN_MISSING(cond, name) \
+    do { if (cond) { PH_LOG_WARN("  [%s] missing: " name, props.deviceName); ok = false; } } while(0)
+
     bool ok = true;
 
-    if (caps.discrete && props.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
-        ok = false;
+    _WARN_MISSING(caps.discrete && props.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
+        "discrete GPU");
 
-    if (caps.rtCapable && (!rtFeatures.rayTracingPipeline || !accelFeatures.accelerationStructure
-        || !_has_extension(exts, extCount, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)
-        || !_has_extension(exts, extCount, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
-        || !_has_extension(exts, extCount, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)))
-        ok = false;
+    if (caps.rtCapable)
+    {
+        _WARN_MISSING(!rtFeatures.rayTracingPipeline,
+            "rayTracingPipeline feature");
+        _WARN_MISSING(!accelFeatures.accelerationStructure,
+            "accelerationStructure feature");
+        _WARN_MISSING(!_has_extension(exts, extCount, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME),
+            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        _WARN_MISSING(!_has_extension(exts, extCount, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME),
+            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        _WARN_MISSING(!_has_extension(exts, extCount, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME),
+            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    }
 
-    if (caps.swapchain && !_has_extension(exts, extCount, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
-        ok = false;
+    _WARN_MISSING(caps.swapchain       && !_has_extension(exts, extCount, VK_KHR_SWAPCHAIN_EXTENSION_NAME),
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
-    if (caps.samplerAnisotropy    && !features2.features.samplerAnisotropy)    ok = false;
-    if (caps.fillModeNonSolid     && !features2.features.fillModeNonSolid)     ok = false;
-    if (caps.wideLines            && !features2.features.wideLines)            ok = false;
-    if (caps.largePoints          && !features2.features.largePoints)          ok = false;
-    if (caps.multiDrawIndirect    && !features2.features.multiDrawIndirect)    ok = false;
-    if (caps.shaderInt64          && !features2.features.shaderInt64)          ok = false;
-    if (caps.shaderFloat64        && !features2.features.shaderFloat64)        ok = false;
+    _WARN_MISSING(caps.samplerAnisotropy && !features2.features.samplerAnisotropy, "samplerAnisotropy");
+    _WARN_MISSING(caps.fillModeNonSolid  && !features2.features.fillModeNonSolid,  "fillModeNonSolid");
+    _WARN_MISSING(caps.wideLines         && !features2.features.wideLines,         "wideLines");
+    _WARN_MISSING(caps.largePoints       && !features2.features.largePoints,       "largePoints");
+    _WARN_MISSING(caps.multiDrawIndirect && !features2.features.multiDrawIndirect, "multiDrawIndirect");
+    _WARN_MISSING(caps.shaderInt64       && !features2.features.shaderInt64,       "shaderInt64");
+    _WARN_MISSING(caps.shaderFloat64     && !features2.features.shaderFloat64,     "shaderFloat64");
 
-    if (caps.bufferDeviceAddress  && !vk12.bufferDeviceAddress)                ok = false;
-    if (caps.descriptorIndexing   && (!vk12.descriptorIndexing
-                                   || !vk12.runtimeDescriptorArray))           ok = false;
-    if (caps.timelineSemaphore    && !vk12.timelineSemaphore)                  ok = false;
+    _WARN_MISSING(caps.bufferDeviceAddress && !vk12.bufferDeviceAddress,           "bufferDeviceAddress");
+    _WARN_MISSING(caps.descriptorIndexing  && !vk12.descriptorIndexing,            "descriptorIndexing");
+    _WARN_MISSING(caps.descriptorIndexing  && !vk12.runtimeDescriptorArray,        "runtimeDescriptorArray");
+    _WARN_MISSING(caps.timelineSemaphore   && !vk12.timelineSemaphore,             "timelineSemaphore");
 
-    if (caps.dynamicRendering     && !vk13.dynamicRendering)                   ok = false;
-    if (caps.synchronization2     && !vk13.synchronization2)                   ok = false;
+    _WARN_MISSING(caps.dynamicRendering  && !vk13.dynamicRendering,                "dynamicRendering");
+    _WARN_MISSING(caps.synchronization2  && !vk13.synchronization2,               "synchronization2");
 
-    if (caps.minimumImageDimensions.width  > 0
-        && props.limits.maxImageDimension2D < caps.minimumImageDimensions.width)  ok = false;
-    if (caps.minimumImageDimensions.height > 0
-        && props.limits.maxImageDimension2D < caps.minimumImageDimensions.height) ok = false;
-    if (caps.minPushConstantsSize > 0
-        && props.limits.maxPushConstantsSize < caps.minPushConstantsSize)         ok = false;
+    _WARN_MISSING(caps.minimumImageDimensions.width  > 0
+        && props.limits.maxImageDimension2D < caps.minimumImageDimensions.width,
+        "minimumImageDimensions.width");
+    _WARN_MISSING(caps.minimumImageDimensions.height > 0
+        && props.limits.maxImageDimension2D < caps.minimumImageDimensions.height,
+        "minimumImageDimensions.height");
+    _WARN_MISSING(caps.minPushConstantsSize > 0
+        && props.limits.maxPushConstantsSize < caps.minPushConstantsSize,
+        "minPushConstantsSize");
 
     if (caps.minimumVRAM > 0)
     {
@@ -104,8 +119,7 @@ static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhC
         for (uint32_t i = 0; i < memProps.memoryHeapCount; i++)
             if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
                 vram += memProps.memoryHeaps[i].size;
-        if (vram < caps.minimumVRAM)
-            ok = false;
+        _WARN_MISSING(vram < caps.minimumVRAM, "minimumVRAM");
     }
 
     bool hasGraphics = false, hasAsyncCompute = false, hasDedicatedTransfer = false;
@@ -119,9 +133,11 @@ static PhStatus _phys_device_meets_requirements(VkPhysicalDevice physDevice, PhC
         if ((f & VK_QUEUE_TRANSFER_BIT) && !(f & VK_QUEUE_GRAPHICS_BIT) && !(f & VK_QUEUE_COMPUTE_BIT))
             hasDedicatedTransfer = true;
     }
-    if (caps.graphicsQueue     && !hasGraphics)          ok = false;
-    if (caps.asyncComputeQueue && !hasAsyncCompute)      ok = false;
-    if (caps.dedicatedTransfer && !hasDedicatedTransfer) ok = false;
+    _WARN_MISSING(caps.graphicsQueue     && !hasGraphics,          "graphics queue");
+    _WARN_MISSING(caps.asyncComputeQueue && !hasAsyncCompute,      "async compute queue");
+    _WARN_MISSING(caps.dedicatedTransfer && !hasDedicatedTransfer, "dedicated transfer queue");
+
+#undef _WARN_MISSING
 
     *pMeetsRequirements = ok;
 
@@ -136,6 +152,7 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
     PhStatus                 status        = PH_SUCCESS;
     VkQueueFamilyProperties *queueFamilies = NULL;
     const char             **extensions    = NULL;
+    VkExtensionProperties   *availExts     = NULL;
 
     PH_NULL_CHECK(PH_LOG_ERROR, pDeviceInfo);
     *pDeviceInfo = (PhDeviceInfo){ 0 };
@@ -193,6 +210,11 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
             .pQueuePriorities = &queuePriority,
         };
 
+    uint32_t availExtCount = 0;
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateDeviceExtensionProperties(physDevice, NULL, &availExtCount, NULL), status, exit);
+    PH_MALLOC_GOTO(PH_LOG_ERROR, availExts, sizeof(VkExtensionProperties) * availExtCount, status, exit);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEnumerateDeviceExtensionProperties(physDevice, NULL, &availExtCount, availExts), status, exit);
+
     uint32_t extCount = 0;
     PH_MALLOC_GOTO(PH_LOG_ERROR, extensions, sizeof(const char *) * 8, status, exit);
 
@@ -204,6 +226,8 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
         extensions[extCount++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
         extensions[extCount++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
     }
+    if (_has_extension(availExts, availExtCount, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME))
+        extensions[extCount++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures = {
         .sType                 = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
@@ -274,6 +298,7 @@ exit:
     }
     PH_FREE_IF_SET(queueFamilies);
     PH_FREE_IF_SET(extensions);
+    PH_FREE_IF_SET(availExts);
     return status;
 }
 
