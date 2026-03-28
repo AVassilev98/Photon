@@ -970,7 +970,7 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores,
         .pImageIndices      = &currentImageIndex,
     };
     presentStatus = vkQueuePresentKHR(hDevice->graphicsQueue, &presentInfo);
-    PH_CHECK_OR_RETURN(PH_LOG_ERROR, presentStatus == VK_SUCCESS || presentStatus == VK_SUBOPTIMAL_KHR, PH_ERR_VK);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, presentStatus == VK_SUCCESS || presentStatus == VK_ERROR_OUT_OF_DATE_KHR || presentStatus == VK_SUBOPTIMAL_KHR, PH_ERR_VK);
     if (presentStatus == VK_ERROR_OUT_OF_DATE_KHR || presentStatus == VK_SUBOPTIMAL_KHR)
     {
         PH_LOG_INFO("Present image returned %s", 
