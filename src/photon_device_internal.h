@@ -19,8 +19,21 @@ typedef struct PhTransfer {
     uint32_t        numChunks;
 } PhTransfer;
 
+#define PH_MAX_FRAMES_IN_FLIGHT 2
+
+typedef struct PhPerFrameResourceInternal {
+    void                    *data;       /* array of PH_MAX_FRAMES_IN_FLIGHT elements */
+    size_t                   elemSize;
+    PhPerFrameCreateFn       create;
+    PhPerFrameDestroyFn      destroy;
+    PhPerFrameRecreateFn     recreate;   /* nullable */
+    void                    *recreateData;
+    bool                     created;
+} PhPerFrameResourceInternal;
+
 FDN_BITVEC_DEFINE(StagingBufferFreeBitVec);
 FDN_VEC_DEFINE(PhTransfer, PhTransferVector);
+FDN_VEC_DEFINE(PhPerFrameResourceInternal, PhPerFrameResourceVec);
 
 typedef struct PhDevice {
     VkPhysicalDevice           physDevice;
@@ -53,4 +66,8 @@ typedef struct PhDevice {
     PhBuffer                   stagingBuffer;
     StagingBufferFreeBitVec    stagingBufferAllocations;
     PhTransferVector           activeTransfers;
+
+    VkDescriptorPool           descriptorPool;
+
+    PhPerFrameResourceVec      perFrameResources;
 } PhDevice;

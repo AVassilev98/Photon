@@ -11,6 +11,7 @@ typedef VkCommandBuffer      PhCommandBuffer;
 typedef VkSubmitInfo         PhQueueSubmitInfo;
 typedef VkBufferUsageFlags   PhBufferUsageFlags;
 typedef VkSharingMode        PhSharingMode;
+typedef VkDescriptorSet      PhDescriptorSet;
 
 typedef struct PhBuffer {
     VkBuffer                  buffer;
@@ -75,6 +76,29 @@ typedef struct PhDeviceInfo {
 } PhDeviceInfo;
 FDN_SPAN_DEFINE(PhDeviceInfo, PhDeviceInfoSpan)
 
+typedef struct PhDescriptorWrite {
+    PhDescriptorSet              set;
+    uint32_t                     binding;
+    uint32_t                     arrayElement;
+    VkDescriptorType             type;
+    uint32_t                     count;
+    const VkDescriptorBufferInfo *pBufferInfo;
+    const VkDescriptorImageInfo  *pImageInfo;
+} PhDescriptorWrite;
+
+typedef PhStatus (*PhPerFrameCreateFn)(PhDeviceHandle, void *userdata, void *out);
+typedef PhStatus (*PhPerFrameRecreateFn)(PhDeviceHandle, void *userdata, void *resource, PhExtent2D newExtent);
+typedef void     (*PhPerFrameDestroyFn)(PhDeviceHandle, void *resource);
+
+typedef struct PhPerFrameResourceCreateInfo {
+    PhPerFrameCreateFn createFn;
+    PhPerFrameDestroyFn destroyFn;
+    // optional
+    PhPerFrameRecreateFn recreateFn;
+    void *recreateData;
+} PhPerFrameResourceCreateInfo;
+typedef uint32_t PhPerFrameResourceHandle;
+
 struct PhPipeline;
 
 PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
@@ -93,3 +117,12 @@ PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFl
 PhStatus ph_device_buffer_destroy(PhDeviceHandle hDevice, PhBuffer *buffer);
 PhStatus ph_device_buffer_upload(PhDeviceHandle hDevice, void *cpuData, uint32_t size, PhBuffer dest);
 PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer);
+PhStatus ph_device_descriptor_sets_allocate(PhDeviceHandle hDevice, const VkDescriptorSetLayout *pLayouts, uint32_t count, PhDescriptorSet *pOut);
+PhStatus ph_device_descriptor_sets_free(PhDeviceHandle hDevice, PhDescriptorSet *pSets, uint32_t count);
+PhStatus ph_device_descriptor_sets_write(PhDeviceHandle hDevice, const PhDescriptorWrite *pWrites, uint32_t writeCount);
+
+PhStatus ph_device_per_frame_register(PhDeviceHandle hDevice, size_t elemSize, PhPerFrameCreateFn create, PhPerFrameDestroyFn destroy, PhPerFrameRecreateFn recreate, PhPerFrameResourceHandle *pHandle);
+PhStatus ph_device_per_frame_create(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void *pCreateParams);
+PhStatus ph_device_per_frame_destroy(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle);
+PhStatus ph_device_per_frame_get(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void **ppOut);
+PhStatus ph_device_per_frame_unregister(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle);

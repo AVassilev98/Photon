@@ -362,6 +362,28 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
     vkGetDeviceQueue(pDeviceInfo->handle->device, graphicsFamily,  0, &pDeviceInfo->handle->graphicsQueue);
     vkGetDeviceQueue(pDeviceInfo->handle->device, computeFamily,   0, &pDeviceInfo->handle->computeQueue);
     vkGetDeviceQueue(pDeviceInfo->handle->device, transferFamily,  0, &pDeviceInfo->handle->transferQueue);
+
+    {
+        VkDescriptorPoolSize poolSizes[] = {
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1024 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         1024 },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096 },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,          1024 },
+            { VK_DESCRIPTOR_TYPE_SAMPLER,                 256 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,           256 },
+        };
+        VkDescriptorPoolCreateInfo poolInfo = {
+            .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+            .maxSets       = 4096,
+            .poolSizeCount = PH_NUM_ELEMS(poolSizes),
+            .pPoolSizes    = poolSizes,
+        };
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkCreateDescriptorPool(pDeviceInfo->handle->device, &poolInfo, NULL, &pDeviceInfo->handle->descriptorPool),
+            status, exit);
+    }
+
 exit:
     if (status != PH_SUCCESS)
     {
@@ -410,6 +432,7 @@ PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhD
                 .vulkanApiVersion = VK_API_VERSION_1_3,
             };
             PH_VK_CHECK_GOTO(PH_LOG_ERROR, vmaCreateAllocator(&allocatorInfo, &hDevice->allocator), status, exit);
+            PhPerFrameResourceVec_init(&hDevice->perFrameResources);
 
             deviceInfoCount++;
         }
@@ -1001,5 +1024,161 @@ PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer)
 
     PH_VK_CHECK(PH_LOG_ERROR, vmaMapMemory(hDevice->allocator, buffer->allocation, &buffer->hostPtr));
 
+    return PH_SUCCESS;
+}
+
+/* ---- Descriptor sets ----------------------------------------------------- */
+
+PhStatus ph_device_descriptor_sets_allocate(PhDeviceHandle hDevice,
+                                            const VkDescriptorSetLayout *pLayouts, uint32_t count,
+                                            PhDescriptorSet *pOut)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pLayouts);
+    PH_NULL_CHECK(PH_LOG_ERROR, pOut);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, count > 0, PH_ERR_INVALID_ARG);
+
+    VkDescriptorSetAllocateInfo allocInfo = {
+        .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool     = hDevice->descriptorPool,
+        .descriptorSetCount = count,
+        .pSetLayouts        = pLayouts,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkAllocateDescriptorSets(hDevice->device, &allocInfo, pOut));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_descriptor_sets_free(PhDeviceHandle hDevice,
+                                        PhDescriptorSet *pSets, uint32_t count)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pSets);
+    PH_VK_CHECK(PH_LOG_ERROR, vkFreeDescriptorSets(hDevice->device, hDevice->descriptorPool, count, pSets));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_descriptor_sets_write(PhDeviceHandle hDevice,
+                                     const PhDescriptorWrite *pWrites, uint32_t writeCount)
+{
+    VkWriteDescriptorSet vkWrites[32];
+    uint32_t remaining = writeCount;
+    const PhDescriptorWrite *src = pWrites;
+
+    while (remaining > 0)
+    {
+        uint32_t batch = remaining > 32 ? 32 : remaining;
+        for (uint32_t i = 0; i < batch; i++)
+        {
+            vkWrites[i] = (VkWriteDescriptorSet){
+                .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet          = src[i].set,
+                .dstBinding      = src[i].binding,
+                .dstArrayElement = src[i].arrayElement,
+                .descriptorType  = src[i].type,
+                .descriptorCount = src[i].count ? src[i].count : 1,
+                .pBufferInfo     = src[i].pBufferInfo,
+                .pImageInfo      = src[i].pImageInfo,
+            };
+        }
+        vkUpdateDescriptorSets(hDevice->device, batch, vkWrites, 0, NULL);
+        src       += batch;
+        remaining -= batch;
+    }
+
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_per_frame_register(PhDeviceHandle hDevice, size_t elemSize, PhPerFrameCreateFn create, PhPerFrameDestroyFn destroy, PhPerFrameRecreateFn recreate, PhPerFrameResourceHandle *pHandle)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, create);
+    PH_NULL_CHECK(PH_LOG_ERROR, destroy);
+    PH_NULL_CHECK(PH_LOG_ERROR, pHandle);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, elemSize > 0, PH_ERR_INVALID_ARG);
+
+    PhPerFrameResourceInternal internal = {
+        .data         = NULL,
+        .elemSize     = elemSize,
+        .create       = create,
+        .destroy      = destroy,
+        .recreate     = recreate,
+        .recreateData = NULL,
+        .created      = false,
+    };
+
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR,
+        PhPerFrameResourceVec_push(&hDevice->perFrameResources, internal),
+        PH_ERR_OUT_OF_MEMORY);
+
+    *pHandle = (uint32_t)(PhPerFrameResourceVec_len(&hDevice->perFrameResources) - 1);
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_per_frame_create(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void *pCreateParams)
+{
+    PhPerFrameResourceInternal *internal = PhPerFrameResourceVec_get(&hDevice->perFrameResources, handle);
+    PH_NULL_CHECK(PH_LOG_ERROR, internal);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, !internal->created, PH_ERR_INVALID_STATE);
+
+    internal->data = calloc(PH_MAX_FRAMES_IN_FLIGHT, internal->elemSize);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, internal->data != NULL, PH_ERR_OUT_OF_MEMORY);
+
+    for (int i = 0; i < PH_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        void *elem = (uint8_t *)internal->data + i * internal->elemSize;
+        PhStatus s = internal->create(hDevice, pCreateParams, elem);
+        if (s != PH_SUCCESS)
+        {
+            for (int j = 0; j < i; j++)
+                internal->destroy(hDevice, (uint8_t *)internal->data + j * internal->elemSize);
+            free(internal->data);
+            internal->data = NULL;
+            return s;
+        }
+    }
+
+    internal->created = true;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_per_frame_destroy(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle)
+{
+    PhPerFrameResourceInternal *internal = PhPerFrameResourceVec_get(&hDevice->perFrameResources, handle);
+    PH_NULL_CHECK(PH_LOG_ERROR, internal);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, internal->created, PH_ERR_INVALID_STATE);
+
+    for (int i = 0; i < PH_MAX_FRAMES_IN_FLIGHT; i++)
+        internal->destroy(hDevice, (uint8_t *)internal->data + i * internal->elemSize);
+
+    free(internal->data);
+    internal->data    = NULL;
+    internal->created = false;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_per_frame_get(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void **ppOut)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, ppOut);
+
+    PhPerFrameResourceInternal *internal = PhPerFrameResourceVec_get(&hDevice->perFrameResources, handle);
+    PH_NULL_CHECK(PH_LOG_ERROR, internal);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, internal->created, PH_ERR_INVALID_STATE);
+
+    uint32_t idx = hDevice->frame % PH_MAX_FRAMES_IN_FLIGHT;
+    *ppOut = (uint8_t *)internal->data + idx * internal->elemSize;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_per_frame_unregister(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle)
+{
+    PhPerFrameResourceInternal *internal = PhPerFrameResourceVec_get(&hDevice->perFrameResources, handle);
+    PH_NULL_CHECK(PH_LOG_ERROR, internal);
+
+    if (internal->created)
+    {
+        for (int i = 0; i < PH_MAX_FRAMES_IN_FLIGHT; i++)
+            internal->destroy(hDevice, (uint8_t *)internal->data + i * internal->elemSize);
+        free(internal->data);
+    }
+
+    memset(internal, 0, sizeof(*internal));
     return PH_SUCCESS;
 }
