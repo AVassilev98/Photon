@@ -133,6 +133,7 @@ add_library(photon
     src/photon_shader.c
     src/photon_pipeline.c
     src/photon_mesh.c
+    src/photon_ubo.c
     src/vma.cpp
 )
 

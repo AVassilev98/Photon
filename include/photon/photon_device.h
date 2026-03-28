@@ -86,7 +86,7 @@ typedef struct PhDescriptorWrite {
     const VkDescriptorImageInfo  *pImageInfo;
 } PhDescriptorWrite;
 
-typedef PhStatus (*PhPerFrameCreateFn)(PhDeviceHandle, void *userdata, void *out);
+typedef PhStatus (*PhPerFrameCreateFn)(PhDeviceHandle, void *userdata, uint32_t frameIndex, void *out);
 typedef PhStatus (*PhPerFrameRecreateFn)(PhDeviceHandle, void *userdata, void *resource, PhExtent2D newExtent);
 typedef void     (*PhPerFrameDestroyFn)(PhDeviceHandle, void *resource);
 
@@ -104,14 +104,15 @@ struct PhPipeline;
 PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
 
 PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
+PhStatus ph_device_extent_get(PhDeviceHandle hDevice, PhExtent2D *pExtent);
+PhStatus ph_device_frame_index_get(PhDeviceHandle hDevice, size_t *pIndex);
 PhStatus ph_device_create_staging_buffer(PhDeviceHandle hDevice, uint32_t size);
-PhStatus ph_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
 PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers);
 PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers);
 PhStatus ph_device_semaphore_create(PhDeviceHandle hDevice, PhSemaphore *out);
 PhStatus ph_device_semaphore_destroy(PhDeviceHandle hDevice, PhSemaphore sem);
-PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image);
 PhStatus ph_device_queue_submit(PhDeviceHandle handle, PhQueueType type, PhQueueSubmitInfo *submitInfo);
+PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image);
 PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores, size_t numSemaphores);
 PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFlags, uint32_t size, PhBufferUsageFlags flags, PhSharingMode sharing, PhBuffer *out, VmaAllocationCreateFlags vmaFlags);
 PhStatus ph_device_buffer_destroy(PhDeviceHandle hDevice, PhBuffer *buffer);
@@ -125,4 +126,5 @@ PhStatus ph_device_per_frame_register(PhDeviceHandle hDevice, size_t elemSize, P
 PhStatus ph_device_per_frame_create(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void *pCreateParams);
 PhStatus ph_device_per_frame_destroy(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle);
 PhStatus ph_device_per_frame_get(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void **ppOut);
+PhStatus ph_device_per_frame_get_at(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, uint32_t index, void **ppOut);
 PhStatus ph_device_per_frame_unregister(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle);

@@ -1,5 +1,6 @@
 #include "photon/photon_device.h"
 #include "photon/photon_pipeline.h"
+#include "photon/photon_window.h"
 #include "photon_device_internal.h"
 #include "photon_instance_internal.h"
 #include "photon/photon_error.h"
@@ -626,6 +627,26 @@ cleanup:
     return status;
 }
 
+PhStatus ph_device_extent_get(PhDeviceHandle hDevice, PhExtent2D *pExtent)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pExtent);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, hDevice->swapchain != VK_NULL_HANDLE, PH_ERR_NOT_FOUND);
+
+    *pExtent = (PhExtent2D) {
+        .width = hDevice->swapchainExtent.width,
+        .height = hDevice->swapchainExtent.height,
+    };
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_frame_index_get(PhDeviceHandle hDevice, size_t *pIndex)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pIndex);
+    *pIndex = hDevice->frame;
+
+    return PH_SUCCESS;
+}
+
 PhStatus ph_device_create_staging_buffer(PhDeviceHandle hDevice, uint32_t size)
 {
     PhBuffer stagingBuffer;
@@ -1027,8 +1048,6 @@ PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer)
     return PH_SUCCESS;
 }
 
-/* ---- Descriptor sets ----------------------------------------------------- */
-
 PhStatus ph_device_descriptor_sets_allocate(PhDeviceHandle hDevice,
                                             const VkDescriptorSetLayout *pLayouts, uint32_t count,
                                             PhDescriptorSet *pOut)
@@ -1124,7 +1143,7 @@ PhStatus ph_device_per_frame_create(PhDeviceHandle hDevice, PhPerFrameResourceHa
     for (int i = 0; i < PH_MAX_FRAMES_IN_FLIGHT; i++)
     {
         void *elem = (uint8_t *)internal->data + i * internal->elemSize;
-        PhStatus s = internal->create(hDevice, pCreateParams, elem);
+        PhStatus s = internal->create(hDevice, pCreateParams, (uint32_t)i, elem);
         if (s != PH_SUCCESS)
         {
             for (int j = 0; j < i; j++)
@@ -1164,6 +1183,19 @@ PhStatus ph_device_per_frame_get(PhDeviceHandle hDevice, PhPerFrameResourceHandl
 
     uint32_t idx = hDevice->frame % PH_MAX_FRAMES_IN_FLIGHT;
     *ppOut = (uint8_t *)internal->data + idx * internal->elemSize;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_per_frame_get_at(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, uint32_t index, void **ppOut)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, ppOut);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, index < PH_MAX_FRAMES_IN_FLIGHT, PH_ERR_INVALID_ARG);
+
+    PhPerFrameResourceInternal *internal = PhPerFrameResourceVec_get(&hDevice->perFrameResources, handle);
+    PH_NULL_CHECK(PH_LOG_ERROR, internal);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, internal->created, PH_ERR_INVALID_STATE);
+
+    *ppOut = (uint8_t *)internal->data + index * internal->elemSize;
     return PH_SUCCESS;
 }
 
