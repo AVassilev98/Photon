@@ -1,9 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
-project(Photon VERSION 0.1.0 LANGUAGES C)
+project(Photon VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
+
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -81,7 +85,13 @@ FetchContent_Declare(
 set(SPIRV_REFLECT_EXECUTABLE     OFF CACHE BOOL "" FORCE)
 set(SPIRV_REFLECT_EXAMPLES       OFF CACHE BOOL "" FORCE)
 set(SPIRV_REFLECT_STATIC_LIB     ON  CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(spirv_reflect assimp)
+FetchContent_Declare(
+    vma
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG        v3.2.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(spirv_reflect assimp vma)
 
 if(NOT SLANGC)
     set(SLANG_VERSION "2026.5.1")
@@ -122,6 +132,7 @@ add_library(photon
     src/photon_device.c
     src/photon_shader.c
     src/photon_pipeline.c
+    src/vma.cpp
 )
 
 target_include_directories(photon
@@ -140,6 +151,7 @@ target_link_libraries(photon
         assimp::assimp
         glm::glm
         spirv-reflect-static
+        GPUOpen::VulkanMemoryAllocator
 )
 
 if(PHOTON_ENABLE_VALIDATION_DEFAULT)
