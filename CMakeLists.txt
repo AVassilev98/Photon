@@ -83,6 +83,27 @@ set(SPIRV_REFLECT_EXAMPLES       OFF CACHE BOOL "" FORCE)
 set(SPIRV_REFLECT_STATIC_LIB     ON  CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(spirv_reflect assimp)
 
+if(NOT SLANGC)
+    set(SLANG_VERSION "2026.5.1")
+    if(APPLE)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+            set(SLANG_PLATFORM "macos-aarch64")
+        else()
+            set(SLANG_PLATFORM "macos-x86_64")
+        endif()
+    elseif(UNIX)
+        set(SLANG_PLATFORM "linux-x86_64")
+    elseif(WIN32)
+        set(SLANG_PLATFORM "windows-x86_64")
+    endif()
+    FetchContent_Declare(slang
+        URL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-${SLANG_PLATFORM}.tar.gz"
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(slang)
+    set(SLANGC "${slang_SOURCE_DIR}/bin/slangc" CACHE FILEPATH "Path to slangc" FORCE)
+endif()
+
 # foundation (standalone container/utility library, consumed as a git submodule)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/foundation/CMakeLists.txt")
     message(FATAL_ERROR
