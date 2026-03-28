@@ -69,5 +69,8 @@ typedef struct PhDevice {
 
     VkDescriptorPool           descriptorPool;
 
+    VkSurfaceKHR               surface;
+    PhPresentOptions           presentOptions;
+
     PhPerFrameResourceVec      perFrameResources;
 } PhDevice;

@@ -486,6 +486,103 @@ static bool _ph_requested_present_mode_in_list(VkPresentModeKHR desiredMode, VkP
 }
 
 
+static void _ph_swapchain_cleanup(PhDeviceHandle hDevice)
+{
+    for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
+    {
+        vkDestroyImageView(hDevice->device, hDevice->pSwapchainImageViews[i], NULL);
+        vkDestroySemaphore(hDevice->device, hDevice->pPresentSemaphores[i], NULL);
+        vkDestroySemaphore(hDevice->device, hDevice->pRenderSemaphores[i], NULL);
+        vkDestroyFence(hDevice->device, hDevice->pPresentFences[i], NULL);
+    }
+    PH_FREE_IF_SET(hDevice->pSwapchainImages);
+    PH_FREE_IF_SET(hDevice->pSwapchainImageViews);
+    PH_FREE_IF_SET(hDevice->pPresentSemaphores);
+    PH_FREE_IF_SET(hDevice->pRenderSemaphores);
+    PH_FREE_IF_SET(hDevice->pPresentFences);
+
+    hDevice->pSwapchainImages     = NULL;
+    hDevice->pSwapchainImageViews = NULL;
+    hDevice->pPresentSemaphores   = NULL;
+    hDevice->pRenderSemaphores    = NULL;
+    hDevice->pPresentFences       = NULL;
+    hDevice->swapchainImageCount  = 0;
+}
+
+static PhStatus _ph_swapchain_create_resources(PhDeviceHandle hDevice)
+{
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, NULL));
+    PH_MALLOC(PH_LOG_ERROR, hDevice->pSwapchainImages, sizeof(VkImage) * hDevice->swapchainImageCount);
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, hDevice->pSwapchainImages));
+
+    PH_MALLOC(PH_LOG_ERROR, hDevice->pSwapchainImageViews, sizeof(VkImageView) * hDevice->swapchainImageCount);
+    PH_MALLOC(PH_LOG_ERROR, hDevice->pPresentSemaphores, sizeof(VkSemaphore) * hDevice->swapchainImageCount);
+    PH_MALLOC(PH_LOG_ERROR, hDevice->pRenderSemaphores, sizeof(VkSemaphore) * hDevice->swapchainImageCount);
+    PH_MALLOC(PH_LOG_ERROR, hDevice->pPresentFences, sizeof(VkFence) * hDevice->swapchainImageCount);
+
+    for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
+    {
+        VkImageViewCreateInfo viewInfo = {
+            .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image      = hDevice->pSwapchainImages[i],
+            .viewType   = VK_IMAGE_VIEW_TYPE_2D,
+            .format     = hDevice->swapchainFormat,
+            .components = {
+                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = {
+                .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel   = 0,
+                .levelCount     = 1,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+            },
+        };
+        PH_VK_CHECK(PH_LOG_ERROR,
+            vkCreateImageView(hDevice->device, &viewInfo, NULL, &hDevice->pSwapchainImageViews[i]));
+
+        VkSemaphoreCreateInfo semaphoreCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+        VkFenceCreateInfo fenceCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        PH_VK_CHECK(PH_LOG_ERROR,
+            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pPresentSemaphores[i]));
+        PH_VK_CHECK(PH_LOG_ERROR,
+            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pRenderSemaphores[i]));
+        PH_VK_CHECK(PH_LOG_ERROR,
+            vkCreateFence(hDevice->device, &fenceCreateInfo, NULL, &hDevice->pPresentFences[i]));
+    }
+
+    return PH_SUCCESS;
+}
+
+static PhStatus _ph_per_frame_resources_recreate(PhDeviceHandle hDevice, PhExtent2D newExtent)
+{
+    size_t count = PhPerFrameResourceVec_len(&hDevice->perFrameResources);
+    for (size_t i = 0; i < count; i++)
+    {
+        PhPerFrameResourceInternal *internal = PhPerFrameResourceVec_get(&hDevice->perFrameResources, i);
+        if (internal && internal->created && internal->recreate)
+        {
+            for (int f = 0; f < PH_MAX_FRAMES_IN_FLIGHT; f++)
+            {
+                void *elem = (uint8_t *)internal->data + f * internal->elemSize;
+                PH_CHECK(PH_LOG_ERROR,
+                    internal->recreate(hDevice, internal->recreateData, elem, newExtent));
+            }
+        }
+    }
+    return PH_SUCCESS;
+}
+
 PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts)
 {
     PhStatus status = PH_SUCCESS;
@@ -564,67 +661,72 @@ PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle
 
     hDevice->swapchainFormat = opts.format.format;
     hDevice->swapchainExtent = extent;
+    hDevice->surface         = hSurface;
+    hDevice->presentOptions  = opts;
 
-    PH_VK_CHECK_GOTO(PH_LOG_ERROR,
-        vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, NULL),
-        status, cleanup);
-    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImages, sizeof(VkImage) * hDevice->swapchainImageCount, status, cleanup);
-    PH_VK_CHECK_GOTO(PH_LOG_ERROR,
-        vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, hDevice->pSwapchainImages),
-        status, cleanup);
-
-    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pSwapchainImageViews, sizeof(VkImageView) * hDevice->swapchainImageCount, status, cleanup);
-    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pPresentSemaphores, sizeof(VkSemaphore) * hDevice->swapchainImageCount, status, cleanup);
-    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pRenderSemaphores,  sizeof(VkSemaphore) * hDevice->swapchainImageCount, status, cleanup);
-    PH_MALLOC_GOTO(PH_LOG_ERROR, hDevice->pPresentFences, sizeof(VkFence) * hDevice->swapchainImageCount, status, cleanup);
-
-    for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
-    {
-        VkImageViewCreateInfo viewInfo = {
-            .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image      = hDevice->pSwapchainImages[i],
-            .viewType   = VK_IMAGE_VIEW_TYPE_2D,
-            .format     = hDevice->swapchainFormat,
-            .components = {
-                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .a = VK_COMPONENT_SWIZZLE_IDENTITY,
-            },
-            .subresourceRange = {
-                .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel   = 0,
-                .levelCount     = 1,
-                .baseArrayLayer = 0,
-                .layerCount     = 1,
-            },
-        };
-        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
-            vkCreateImageView(hDevice->device, &viewInfo, NULL, &hDevice->pSwapchainImageViews[i]),
-            status, cleanup);
-
-        VkSemaphoreCreateInfo semaphoreCreateInfo = {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .flags = 0,
-            .pNext = NULL,
-        };
-        VkFenceCreateInfo fenceCreateInfo = {
-            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-            .pNext = NULL,
-        };
-        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
-            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pPresentSemaphores[i]), status, cleanup);
-        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
-            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pRenderSemaphores[i]), status, cleanup);
-        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
-            vkCreateFence(hDevice->device, &fenceCreateInfo, NULL, &hDevice->pPresentFences[i]), status, cleanup);
-    }
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, _ph_swapchain_create_resources(hDevice), status, cleanup);
 
 cleanup:
     PH_FREE_IF_SET(pSurfaceFormats);
     PH_FREE_IF_SET(pPresentModes);
     return status;
+}
+
+PhStatus ph_device_swapchain_recreate(PhDeviceHandle hDevice)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, hDevice);
+    PH_VK_CHECK(PH_LOG_ERROR, vkDeviceWaitIdle(hDevice->device));
+
+    VkSwapchainKHR oldSwapchain = hDevice->swapchain;
+    _ph_swapchain_cleanup(hDevice);
+
+    VkSurfaceCapabilitiesKHR surfaceCaps = { 0 };
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(hDevice->physDevice, hDevice->surface, &surfaceCaps));
+
+    VkExtent2D extent = surfaceCaps.currentExtent;
+    if (extent.width == 0 || extent.height == 0)
+    {
+        vkDestroySwapchainKHR(hDevice->device, oldSwapchain, NULL);
+        hDevice->swapchain       = VK_NULL_HANDLE;
+        hDevice->swapchainExtent = extent;
+        return PH_SUCCESS;
+    }
+
+    uint32_t imageCount = surfaceCaps.minImageCount + 1;
+    if (surfaceCaps.maxImageCount > 0 && imageCount > surfaceCaps.maxImageCount)
+        imageCount = surfaceCaps.maxImageCount;
+
+    VkSwapchainCreateInfoKHR swapchainInfo = {
+        .sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface          = hDevice->surface,
+        .minImageCount    = imageCount,
+        .imageFormat      = hDevice->presentOptions.format.format,
+        .imageColorSpace  = hDevice->presentOptions.format.colorSpace,
+        .imageExtent      = extent,
+        .imageArrayLayers = 1,
+        .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .preTransform     = surfaceCaps.currentTransform,
+        .compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode      = hDevice->presentOptions.mode,
+        .clipped          = VK_TRUE,
+        .oldSwapchain     = oldSwapchain,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vkCreateSwapchainKHR(hDevice->device, &swapchainInfo, NULL, &hDevice->swapchain));
+    vkDestroySwapchainKHR(hDevice->device, oldSwapchain, NULL);
+
+    hDevice->swapchainExtent = extent;
+    hDevice->frame = 0;
+
+    PH_CHECK(PH_LOG_ERROR, _ph_swapchain_create_resources(hDevice));
+
+    PhExtent2D newExtent = { .width = extent.width, .height = extent.height };
+    PH_CHECK(PH_LOG_ERROR, _ph_per_frame_resources_recreate(hDevice, newExtent));
+
+    return PH_SUCCESS;
 }
 
 PhStatus ph_device_extent_get(PhDeviceHandle hDevice, PhExtent2D *pExtent)
@@ -751,17 +853,23 @@ PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image
 {
     size_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
     uint32_t imageIndex = 0;
+    VkResult acquireResult = VK_SUCCESS;
 
     PH_NULL_CHECK(PH_LOG_ERROR, image);
-    
+
     PH_VK_CHECK(PH_LOG_ERROR,
         vkWaitForFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex], VK_TRUE, UINT64_MAX));
     PH_VK_CHECK(PH_LOG_ERROR,
         vkResetFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex]));
 
-    PH_VK_CHECK(PH_LOG_ERROR,
-        vkAcquireNextImageKHR(hDevice->device, hDevice->swapchain, UINT64_MAX, hDevice->pPresentSemaphores[currentImageIndex], VK_NULL_HANDLE, &imageIndex));
-    PH_CHECK_OR_RETURN(PH_LOG_ERROR, imageIndex == currentImageIndex, PH_ERR_INVALID_STATE);
+    acquireResult = vkAcquireNextImageKHR(hDevice->device, hDevice->swapchain, UINT64_MAX,
+        hDevice->pPresentSemaphores[currentImageIndex], VK_NULL_HANDLE, &imageIndex);
+
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR)
+    {
+        PH_LOG_INFO("Acquire image returned %s", 
+            acquireResult == VK_ERROR_OUT_OF_DATE_KHR ? "VK_ERROR_OUT_OF_DATE_KHR" : "VK_SUBOPTIMAL_KHR");
+    }
 
     *image = (PhImage) {
         .image = hDevice->pSwapchainImages[imageIndex],
@@ -770,6 +878,8 @@ PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image
         .readySemaphore = hDevice->pPresentSemaphores[imageIndex],
     };
 
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) { return PH_ERR_SWAPCHAIN_OUT_OF_DATE; }
+    if (acquireResult == VK_SUBOPTIMAL_KHR) { return PH_ERR_SWAPCHAIN_SUBOPTIMAL; }
     return PH_SUCCESS;
 }
 
@@ -798,6 +908,7 @@ PhStatus ph_device_queue_submit(PhDeviceHandle hDevice, PhQueueType type, PhQueu
 
 PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores, size_t numSemaphores)
 {
+    VkResult presentStatus = VK_SUCCESS;
     uint32_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
     PhCommandBuffer buffer;
 
@@ -858,8 +969,13 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores,
         .pSwapchains        = &hDevice->swapchain,
         .pImageIndices      = &currentImageIndex,
     };
-    PH_VK_CHECK(PH_LOG_ERROR,
-        vkQueuePresentKHR(hDevice->graphicsQueue, &presentInfo));
+    presentStatus = vkQueuePresentKHR(hDevice->graphicsQueue, &presentInfo);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, presentStatus == VK_SUCCESS || presentStatus == VK_SUBOPTIMAL_KHR, PH_ERR_VK);
+    if (presentStatus == VK_ERROR_OUT_OF_DATE_KHR || presentStatus == VK_SUBOPTIMAL_KHR)
+    {
+        PH_LOG_INFO("Present image returned %s", 
+            presentStatus == VK_ERROR_OUT_OF_DATE_KHR ? "VK_ERROR_OUT_OF_DATE_KHR" : "VK_SUBOPTIMAL_KHR");
+    }
 
     hDevice->frame++;
     return PH_SUCCESS;

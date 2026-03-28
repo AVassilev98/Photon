@@ -104,6 +104,7 @@ struct PhPipeline;
 PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
 
 PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
+PhStatus ph_device_swapchain_recreate(PhDeviceHandle hDevice);
 PhStatus ph_device_extent_get(PhDeviceHandle hDevice, PhExtent2D *pExtent);
 PhStatus ph_device_frame_index_get(PhDeviceHandle hDevice, size_t *pIndex);
 PhStatus ph_device_create_staging_buffer(PhDeviceHandle hDevice, uint32_t size);
