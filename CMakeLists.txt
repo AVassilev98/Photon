@@ -7,7 +7,7 @@ set(CMAKE_C_EXTENSIONS ON)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -59,12 +59,12 @@ set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
-    glm
-    GIT_REPOSITORY https://github.com/g-truc/glm.git
-    GIT_TAG        1.0.1
+    cglm
+    GIT_REPOSITORY https://github.com/recp/cglm.git
+    GIT_TAG        v0.9.6
     GIT_SHALLOW    TRUE
 )
-FetchContent_MakeAvailable(glfw glm)
+FetchContent_MakeAvailable(glfw cglm)
 
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
@@ -132,6 +132,7 @@ add_library(photon
     src/photon_device.c
     src/photon_shader.c
     src/photon_pipeline.c
+    src/photon_mesh.c
     src/vma.cpp
 )
 
@@ -149,9 +150,11 @@ target_link_libraries(photon
         foundation
         glfw
         assimp::assimp
-        glm::glm
+        cglm
         spirv-reflect-static
         GPUOpen::VulkanMemoryAllocator
+        $<$<CXX_COMPILER_ID:AppleClang,Clang>:c++>
+        $<$<CXX_COMPILER_ID:GNU>:stdc++>
 )
 
 if(PHOTON_ENABLE_VALIDATION_DEFAULT)

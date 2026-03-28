@@ -6,11 +6,13 @@
 #include "photon/photon_log.h"
 #include "photon/photon_status.h"
 #include <stdint.h>
+#include <string.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_beta.h>
 #include "stdlib.h"
 #include "stdbool.h"
 #include "string.h"
+#include "vk_mem_alloc.h"
 
 static bool _has_extension(VkExtensionProperties *exts, uint32_t count, const char *name)
 {
@@ -197,6 +199,10 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
             transferFamily = i;
     }
 
+    /* Fall back to graphics queue if no dedicated compute/transfer family found */
+    if (computeFamily  == UINT32_MAX) computeFamily  = graphicsFamily;
+    if (transferFamily == UINT32_MAX) transferFamily = graphicsFamily;
+
     float                  queuePriority = 1.0f;
     VkDeviceQueueCreateInfo queueInfos[3];
     VkCommandPoolCreateInfo commandPoolInfos[3];
@@ -218,7 +224,7 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
         };
         queueInfoCount++;
     }
-    if (computeFamily != UINT32_MAX)
+    if (computeFamily != UINT32_MAX && computeFamily != graphicsFamily)
     {
         queueInfos[queueInfoCount] = (VkDeviceQueueCreateInfo){
             .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -234,7 +240,7 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
         };
         queueInfoCount++;
     }
-    if (transferFamily != UINT32_MAX)
+    if (transferFamily != UINT32_MAX && transferFamily != graphicsFamily && transferFamily != computeFamily)
     {
         queueInfos[queueInfoCount] = (VkDeviceQueueCreateInfo){
             .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -326,15 +332,36 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
 
     PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateDevice(physDevice, &deviceInfo, NULL, &pDeviceInfo->handle->device), status, exit);
     
-    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[0], NULL, &pDeviceInfo->handle->graphicsPool), status, exit);
-    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[1], NULL, &pDeviceInfo->handle->computePool), status, exit);
-    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[2], NULL, &pDeviceInfo->handle->transferPool), status, exit);
+    pDeviceInfo->handle->graphicsQueueFamily = graphicsFamily;
+    pDeviceInfo->handle->computeQueueFamily = computeFamily;
+    pDeviceInfo->handle->transferQueueFamily = transferFamily;
 
-    vkGetDeviceQueue(pDeviceInfo->handle->device, graphicsFamily, 0, &pDeviceInfo->handle->graphicsQueue);
-    if (computeFamily  != UINT32_MAX)
-        vkGetDeviceQueue(pDeviceInfo->handle->device, computeFamily,  0, &pDeviceInfo->handle->computeQueue);
-    if (transferFamily != UINT32_MAX)
-        vkGetDeviceQueue(pDeviceInfo->handle->device, transferFamily, 0, &pDeviceInfo->handle->transferQueue);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[0], NULL, &pDeviceInfo->handle->graphicsPool), status, exit);
+
+    if (computeFamily != graphicsFamily)
+    {
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[1], NULL, &pDeviceInfo->handle->computePool), status, exit);
+    }
+    else
+    {
+        pDeviceInfo->handle->computePool = pDeviceInfo->handle->graphicsPool;
+    }
+
+    if (transferFamily != graphicsFamily && transferFamily != computeFamily)
+    {
+        uint32_t transferPoolIdx = (computeFamily != graphicsFamily) ? 2 : 1;
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkCreateCommandPool(pDeviceInfo->handle->device, &commandPoolInfos[transferPoolIdx], NULL, &pDeviceInfo->handle->transferPool), status, exit);
+    }
+    else
+    {
+        pDeviceInfo->handle->transferPool = (transferFamily == computeFamily)
+            ? pDeviceInfo->handle->computePool
+            : pDeviceInfo->handle->graphicsPool;
+    }
+
+    vkGetDeviceQueue(pDeviceInfo->handle->device, graphicsFamily,  0, &pDeviceInfo->handle->graphicsQueue);
+    vkGetDeviceQueue(pDeviceInfo->handle->device, computeFamily,   0, &pDeviceInfo->handle->computeQueue);
+    vkGetDeviceQueue(pDeviceInfo->handle->device, transferFamily,  0, &pDeviceInfo->handle->transferQueue);
 exit:
     if (status != PH_SUCCESS)
     {
@@ -346,7 +373,7 @@ exit:
     return status;
 }
 
-PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *pDeviceInfoSpan)
+PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *pDeviceInfoSpan)
 {
     PhStatus status = PH_SUCCESS;
     uint32_t physDeviceCount = 0;
@@ -373,7 +400,17 @@ PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhD
         {
             PH_PROPAGATE_GOTO(PH_LOG_ERROR, _initialize_ph_device_info(pPhysicalDevices[i], caps, &pDeviceInfos[deviceInfoCount]), status, exit);
             PH_LOG_INFO("Initialized device: %s", pDeviceInfos[deviceInfoCount].pName);
-            
+
+            PhDeviceHandle hDevice = pDeviceInfos[deviceInfoCount].handle;
+            hDevice->instance = hInstance->instance;
+            VmaAllocatorCreateInfo allocatorInfo = {
+                .physicalDevice   = pPhysicalDevices[i],
+                .device           = hDevice->device,
+                .instance         = hInstance->instance,
+                .vulkanApiVersion = VK_API_VERSION_1_3,
+            };
+            PH_VK_CHECK_GOTO(PH_LOG_ERROR, vmaCreateAllocator(&allocatorInfo, &hDevice->allocator), status, exit);
+
             deviceInfoCount++;
         }
     }
@@ -390,6 +427,8 @@ exit:
     {
         for (size_t i = 0; i < deviceInfoCount; i++)
         {
+            if (pDeviceInfos[i].handle->allocator)
+                vmaDestroyAllocator(pDeviceInfos[i].handle->allocator);
             PH_FREE_IF_SET(pDeviceInfos[i].handle);
         }
         PH_FREE_IF_SET(pDeviceInfos);
@@ -423,7 +462,7 @@ static bool _ph_requested_present_mode_in_list(VkPresentModeKHR desiredMode, VkP
 }
 
 
-PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts)
+PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts)
 {
     PhStatus status = PH_SUCCESS;
     uint32_t surfaceFormatCount = 0;
@@ -564,6 +603,32 @@ cleanup:
     return status;
 }
 
+PhStatus ph_device_create_staging_buffer(PhDeviceHandle hDevice, uint32_t size)
+{
+    PhBuffer stagingBuffer;
+
+    if (size % PH_ALLOCATION_GRANULARITY)
+    {
+        PH_LOG_ERROR("Staging buffer must be a multiple of %d\n", PH_ALLOCATION_GRANULARITY / KB);
+        return PH_ERR_INVALID_ARG;
+    }
+    
+    PH_CHECK(PH_LOG_ERROR,
+        ph_device_buffer_create(hDevice, PH_QUEUE_TYPE_TRANSFER_BIT, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_SHARING_MODE_EXCLUSIVE, &stagingBuffer, 
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT));
+    
+    PH_CHECK(PH_LOG_ERROR, ph_device_buffer_map(hDevice, &stagingBuffer));
+
+    hDevice->stagingBuffer = stagingBuffer;
+
+    StagingBufferFreeBitVec_init(&hDevice->stagingBufferAllocations);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, 
+        StagingBufferFreeBitVec_resize(&hDevice->stagingBufferAllocations, size / PH_ALLOCATION_GRANULARITY), PH_ERR_OUT_OF_MEMORY);
+    PhTransferVector_init(&hDevice->activeTransfers);
+
+    return PH_SUCCESS;
+}
+
 PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers)
 {
     VkCommandPool commandPool = { 0 };
@@ -573,15 +638,17 @@ PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType typ
     
     switch (type)
     {
-        case PH_QUEUE_TYPE_GRAPHICS:
+        case PH_QUEUE_TYPE_GRAPHICS_BIT:
             commandPool = hDevice->graphicsPool;
             break;
-        case PH_QUEUE_TYPE_COMPUTE:
+        case PH_QUEUE_TYPE_COMPUTE_BIT:
             commandPool = hDevice->computePool;
             break;
-        case PH_QUEUE_TYPE_TRANSFER:
+        case PH_QUEUE_TYPE_TRANSFER_BIT:
             commandPool = hDevice->transferPool;
             break;
+        default:
+            PH_CHECK_OR_RETURN(PH_LOG_ERROR, false, PH_ERR_INVALID_ARG);
     };
 
     bufferAllocateInfo = (VkCommandBufferAllocateInfo) {
@@ -619,15 +686,17 @@ PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType ty
     
     switch (type)
     {
-        case PH_QUEUE_TYPE_GRAPHICS:
+        case PH_QUEUE_TYPE_GRAPHICS_BIT:
             commandPool = hDevice->graphicsPool;
             break;
-        case PH_QUEUE_TYPE_COMPUTE:
+        case PH_QUEUE_TYPE_COMPUTE_BIT:
             commandPool = hDevice->computePool;
             break;
-        case PH_QUEUE_TYPE_TRANSFER:
+        case PH_QUEUE_TYPE_TRANSFER_BIT:
             commandPool = hDevice->transferPool;
             break;
+        default:
+            PH_CHECK_OR_RETURN(PH_LOG_ERROR, false, PH_ERR_INVALID_ARG);
     };
 
     vkFreeCommandBuffers(hDevice->device, commandPool, count, pBuffers);
@@ -665,15 +734,18 @@ PhStatus ph_device_queue_submit(PhDeviceHandle hDevice, PhQueueType type, PhQueu
     VkQueue queue = NULL;
     switch (type)
     {
-        case PH_QUEUE_TYPE_GRAPHICS:
+        case PH_QUEUE_TYPE_GRAPHICS_BIT:
             queue = hDevice->graphicsQueue;
             break;
-        case PH_QUEUE_TYPE_TRANSFER:
+        case PH_QUEUE_TYPE_TRANSFER_BIT:
             queue = hDevice->transferQueue;
             break;
-        case PH_QUEUE_TYPE_COMPUTE:
+        case PH_QUEUE_TYPE_COMPUTE_BIT:
             queue = hDevice->computeQueue;
             break;
+        default:
+            PH_CHECK_OR_RETURN(PH_LOG_ERROR, false, PH_ERR_INVALID_ARG);
+
     }
 
     PH_VK_CHECK(PH_LOG_ERROR, vkQueueSubmit(queue, 1UL, submitInfo, NULL));
@@ -685,7 +757,7 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores,
     uint32_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
     PhCommandBuffer buffer;
 
-    ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_GRAPHICS, 1, &buffer);
+    PH_CHECK(PH_LOG_ERROR, ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_GRAPHICS_BIT, 1, &buffer));
     
     VkCommandBufferBeginInfo bufferBeginInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -746,5 +818,188 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores,
         vkQueuePresentKHR(hDevice->graphicsQueue, &presentInfo));
 
     hDevice->frame++;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFlags, uint32_t size, PhBufferUsageFlags flags, PhSharingMode sharing, PhBuffer *out, VmaAllocationCreateFlags vmaFlags)
+{
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, size > 0, PH_ERR_INVALID_ARG);
+    PH_NULL_CHECK(PH_LOG_ERROR, out);
+
+    VmaAllocation allocation;
+    VkBuffer buffer;
+
+    uint32_t numQueueFamilies = 0;
+    uint32_t queueFamilyIndices[PH_NUM_QUEUE_TYPES] = {};
+    if (queueTypeFlags & PH_QUEUE_TYPE_GRAPHICS_BIT)
+    {
+        queueFamilyIndices[numQueueFamilies++] = hDevice->graphicsQueueFamily;
+    }
+    if (queueTypeFlags & PH_QUEUE_TYPE_COMPUTE_BIT)
+    {
+        queueFamilyIndices[numQueueFamilies++] = hDevice->computeQueueFamily;
+    }
+    if (queueTypeFlags & PH_QUEUE_TYPE_TRANSFER_BIT)
+    {
+        queueFamilyIndices[numQueueFamilies++] = hDevice->transferQueueFamily;
+    }
+
+    VkBufferCreateInfo bufferCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .queueFamilyIndexCount = numQueueFamilies,
+        .pQueueFamilyIndices = queueFamilyIndices,
+        .size = size,
+        .sharingMode = sharing,
+        .usage = flags
+    };
+
+    VmaAllocationCreateInfo allocInfo = {
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .flags = vmaFlags,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, 
+        vmaCreateBuffer(hDevice->allocator, &bufferCreateInfo, &allocInfo, &buffer, &allocation, NULL));
+
+    *out = (PhBuffer) {
+        .buffer = buffer,
+        .allocation = allocation,
+        .flags = vmaFlags,
+        .hostPtr = NULL,
+        .size = size,
+    };
+    
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_buffer_destroy(PhDeviceHandle hDevice, PhBuffer *buffer)
+{    
+    PH_NULL_CHECK(PH_LOG_ERROR, buffer);
+
+    vmaDestroyBuffer(hDevice->allocator, buffer->buffer, buffer->allocation);
+    return PH_SUCCESS;
+}
+
+static PhStatus _ph_device_staging_buffer_reclaim(PhDeviceHandle hDevice)
+{
+    uint32_t freeSlot = 0;
+    uint32_t i = 0;
+    while (i < hDevice->activeTransfers.len)
+    {
+        PhTransfer *transfer = &hDevice->activeTransfers.data[i];
+        if (vkGetFenceStatus(hDevice->device, transfer->transferComplete) == VK_SUCCESS)
+        {
+            StagingBufferFreeBitVec_unset_range(&hDevice->stagingBufferAllocations, transfer->startChunk, transfer->numChunks);
+            PhTransferVector_swap_remove(&hDevice->activeTransfers, i);
+        }
+        else
+        {
+            i++;
+        }
+    }
+
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_buffer_upload(PhDeviceHandle hDevice, void *cpuData, uint32_t size, PhBuffer dest)
+{
+    PhStatus        status     = PH_SUCCESS;
+    VkCommandBuffer cmd        = VK_NULL_HANDLE;
+    VkFence         fence      = VK_NULL_HANDLE;
+    uint32_t        startChunk = 0;
+    uint32_t        idx        = 0;
+
+    PH_NULL_CHECK(PH_LOG_ERROR, cpuData);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, size > 0, PH_ERR_INVALID_ARG);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, hDevice->stagingBuffer.hostPtr != NULL, PH_ERR_INVALID_STATE);
+
+    uint32_t numChunks   = (size + PH_ALLOCATION_GRANULARITY - 1) / PH_ALLOCATION_GRANULARITY;
+    size_t   totalChunks = StagingBufferFreeBitVec_len(&hDevice->stagingBufferAllocations);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, numChunks <= totalChunks, PH_ERR_INVALID_ARG);
+
+    while (startChunk + numChunks <= totalChunks &&
+           !StagingBufferFreeBitVec_all_clear(&hDevice->stagingBufferAllocations, startChunk, numChunks, &idx))
+    {
+        startChunk = idx + 1;
+    }
+    // If we have run out of memory, try to reclaim, then run again
+    PH_CHECK(PH_LOG_ERROR, _ph_device_staging_buffer_reclaim(hDevice));
+    while (startChunk + numChunks <= totalChunks &&
+           !StagingBufferFreeBitVec_all_clear(&hDevice->stagingBufferAllocations, startChunk, numChunks, &idx))
+    {
+        startChunk = idx + 1;
+    }
+
+    // Error if we still can't find space after reclaiming
+    PH_CHECK_GOTO(PH_LOG_ERROR, startChunk + numChunks <= totalChunks, PH_ERR_OUT_OF_MEMORY, status, exit);
+
+    StagingBufferFreeBitVec_set_range(&hDevice->stagingBufferAllocations, startChunk, numChunks);
+    memcpy((uint8_t *)hDevice->stagingBuffer.hostPtr + (size_t)startChunk * PH_ALLOCATION_GRANULARITY,
+           cpuData, size);
+    vmaFlushAllocation(hDevice->allocator, hDevice->stagingBuffer.allocation,
+                       (VkDeviceSize)startChunk * PH_ALLOCATION_GRANULARITY, size);
+
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR,
+        ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_TRANSFER_BIT, 1, &cmd),
+        status, exit);
+
+    VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, 
+        vkBeginCommandBuffer(cmd, &beginInfo), status, exit);
+
+    VkBufferCopy region = {
+        .srcOffset = (VkDeviceSize)startChunk * PH_ALLOCATION_GRANULARITY,
+        .dstOffset = 0,
+        .size      = size,
+    };
+    vkCmdCopyBuffer(cmd, hDevice->stagingBuffer.buffer, dest.buffer, 1, &region);
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, 
+        vkEndCommandBuffer(cmd), status, exit);
+
+    VkFenceCreateInfo fenceInfo = { 
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO
+    };
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, 
+        vkCreateFence(hDevice->device, &fenceInfo, NULL, &fence), status, exit);
+
+    VkSubmitInfo submitInfo = {
+        .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers    = &cmd,
+    };
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, 
+        vkQueueSubmit(hDevice->transferQueue, 1, &submitInfo, fence), status, exit);
+
+    PH_CHECK_GOTO(PH_LOG_ERROR,
+        PhTransferVector_push(&hDevice->activeTransfers,
+            ((PhTransfer){ 
+                .transferComplete = fence, 
+                .startChunk = startChunk, 
+                .numChunks = numChunks,
+                .commandBuffer = cmd,
+            })),
+        PH_ERR_OUT_OF_MEMORY, status, exit);
+
+    return PH_SUCCESS;
+
+exit:
+    if (fence      != VK_NULL_HANDLE) vkDestroyFence(hDevice->device, fence, NULL);
+    if (cmd        != VK_NULL_HANDLE) ph_device_command_buffer_destroy(hDevice, PH_QUEUE_TYPE_TRANSFER_BIT, 1, &cmd);
+    if (startChunk != UINT32_MAX)     StagingBufferFreeBitVec_unset_range(&hDevice->stagingBufferAllocations, startChunk, numChunks);
+    return status;
+}
+
+PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, buffer);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, buffer->flags & VMA_ALLOCATION_CREATE_MAPPED_BIT, PH_ERR_INVALID_ARG);
+
+    PH_VK_CHECK(PH_LOG_ERROR, vmaMapMemory(hDevice->allocator, buffer->allocation, &buffer->hostPtr));
+
     return PH_SUCCESS;
 }

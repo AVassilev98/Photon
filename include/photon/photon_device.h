@@ -1,12 +1,24 @@
 #pragma once
 
+#include "photon/photon_status.h"
 #include "photon_instance.h"
 #include "photon_window.h"
 #include "foundation/span.h"
+#include "vk_mem_alloc.h"
 
-typedef struct PhDevice *PhDeviceHandle;
-typedef VkCommandBuffer PhCommandBuffer;
-typedef VkSubmitInfo    PhQueueSubmitInfo;
+typedef struct PhDevice     *PhDeviceHandle;
+typedef VkCommandBuffer      PhCommandBuffer;
+typedef VkSubmitInfo         PhQueueSubmitInfo;
+typedef VkBufferUsageFlags   PhBufferUsageFlags;
+typedef VkSharingMode        PhSharingMode;
+
+typedef struct PhBuffer {
+    VkBuffer                  buffer;
+    VmaAllocation             allocation;
+    VmaAllocationCreateFlags  flags;
+    void                     *hostPtr;
+    uint32_t                  size;
+} PhBuffer;
 
 typedef struct PhImage {
     VkImageView defaultView;
@@ -17,10 +29,11 @@ typedef struct PhImage {
 typedef VkSemaphore     PhSemaphore;
 
 typedef enum PhQueueType {
-    PH_QUEUE_TYPE_GRAPHICS,
-    PH_QUEUE_TYPE_COMPUTE,
-    PH_QUEUE_TYPE_TRANSFER,
+    PH_QUEUE_TYPE_GRAPHICS_BIT = 0x1,
+    PH_QUEUE_TYPE_COMPUTE_BIT = 0x2,
+    PH_QUEUE_TYPE_TRANSFER_BIT = 0x4,
 } PhQueueType;
+#define PH_NUM_QUEUE_TYPES 3UL
 
 typedef struct PhCapability {
     uint32_t discrete               : 1;
@@ -64,8 +77,11 @@ FDN_SPAN_DEFINE(PhDeviceInfo, PhDeviceInfoSpan)
 
 struct PhPipeline;
 
-PhStatus ph_enumerate_devices(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
-PhStatus ph_configure_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
+PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
+
+PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
+PhStatus ph_device_create_staging_buffer(PhDeviceHandle hDevice, uint32_t size);
+PhStatus ph_device_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
 PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers);
 PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers);
 PhStatus ph_device_semaphore_create(PhDeviceHandle hDevice, PhSemaphore *out);
@@ -73,3 +89,7 @@ PhStatus ph_device_semaphore_destroy(PhDeviceHandle hDevice, PhSemaphore sem);
 PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image);
 PhStatus ph_device_queue_submit(PhDeviceHandle handle, PhQueueType type, PhQueueSubmitInfo *submitInfo);
 PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores, size_t numSemaphores);
+PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFlags, uint32_t size, PhBufferUsageFlags flags, PhSharingMode sharing, PhBuffer *out, VmaAllocationCreateFlags vmaFlags);
+PhStatus ph_device_buffer_destroy(PhDeviceHandle hDevice, PhBuffer *buffer);
+PhStatus ph_device_buffer_upload(PhDeviceHandle hDevice, void *cpuData, uint32_t size, PhBuffer dest);
+PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer);

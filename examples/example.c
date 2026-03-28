@@ -20,7 +20,7 @@ PhStatus renderTriangle(PhDeviceHandle device, PhPipeline *pipeline, PhImage *im
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
     PH_CHECK(PH_LOG_ERROR, ph_device_semaphore_create(device, &finishedSemaphore));
-    PH_CHECK(PH_LOG_ERROR, ph_device_command_buffer_create(device, PH_QUEUE_TYPE_GRAPHICS, 1, &buffer));
+    PH_CHECK(PH_LOG_ERROR, ph_device_command_buffer_create(device, PH_QUEUE_TYPE_GRAPHICS_BIT, 1, &buffer));
     PH_VK_CHECK(PH_LOG_ERROR, vkBeginCommandBuffer(buffer, &beginInfo));
 
 
@@ -99,7 +99,7 @@ PhStatus renderTriangle(PhDeviceHandle device, PhPipeline *pipeline, PhImage *im
     };
 
     PH_CHECK(PH_LOG_ERROR, 
-        ph_device_queue_submit(device, PH_QUEUE_TYPE_GRAPHICS, &submitInfo));
+        ph_device_queue_submit(device, PH_QUEUE_TYPE_GRAPHICS_BIT, &submitInfo));
     
     *pSignal = finishedSemaphore;
     return PH_SUCCESS;
@@ -153,7 +153,7 @@ int main(void) {
         .dynamicRendering = true,
     };
 
-    PH_CHECK(PH_LOG_ERROR, ph_enumerate_devices(hInstance, deviceCaps, &deviceInfos));
+    PH_CHECK(PH_LOG_ERROR, ph_devices_enumerate(hInstance, deviceCaps, &deviceInfos));
 
     presentOptions = (PhPresentOptions) {
         .format = {
@@ -164,7 +164,7 @@ int main(void) {
     };
     PH_CHECK(PH_LOG_ERROR, ph_window_get_surface(hWindow, &hSurface));
     chosenDevice = deviceInfos.ptr[0].handle;
-    PH_CHECK(PH_LOG_ERROR, ph_configure_device_for_present(chosenDevice, hSurface, presentOptions));
+    PH_CHECK(PH_LOG_ERROR, ph_device_configure_for_present(chosenDevice, hSurface, presentOptions));
     PH_CHECK(PH_LOG_ERROR, ph_create_shader_module(deviceInfos.ptr[0].handle, SHADER_DIR "/triangle.spv", &triangleShader));
 
     VkFormat colorFormat = VK_FORMAT_B8G8R8A8_SRGB;
