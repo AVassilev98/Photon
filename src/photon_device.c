@@ -1,6 +1,9 @@
 #include "photon/photon_device.h"
+#include "GLFW/glfw3.h"
+#include "cglm/cglm.h"
 #include "photon/photon_pipeline.h"
 #include "photon/photon_window.h"
+#include "photon_window_internal.h"
 #include "photon_device_internal.h"
 #include "photon_instance_internal.h"
 #include "photon/photon_error.h"
@@ -396,6 +399,101 @@ exit:
     return status;
 }
 
+static PhStatus _ph_device_camera_init(PhDeviceHandle hDevice, PhCamera *camera)
+{
+    glm_quat_identity(camera->quat);
+    glm_vec3_copy((vec3){2.0f, 2.0f, 2.0f}, camera->position);
+    camera->mousePos[0] = 0.0;
+    camera->mousePos[1] = 0.0;
+    camera->lastUpdateTimestamp = 0;
+    camera->sensitivity = 0.005f;
+    camera->speed = 2.0f;
+
+    // Point toward origin: extract world-space orientation from lookat
+    mat4 lookAt;
+    glm_lookat(camera->position, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 0.0f, 1.0f}, lookAt);
+    glm_mat4_quat(lookAt, camera->quat);
+    glm_quat_conjugate(camera->quat, camera->quat);
+
+    return PH_SUCCESS;
+}
+
+static void _ph_device_camera_rotate(PhWindowHandle hWindow, double xpos, double ypos)
+{
+    PhDeviceHandle hDevice = ph_window_callback_data_get(hWindow);
+    PhCamera *camera = &hDevice->camera;
+    double timestamp = glfwGetTime();
+
+    float dx = xpos - camera->mousePos[0];
+    float dy =  ypos - camera->mousePos[1];
+    double dt = timestamp - camera->lastUpdateTimestamp;
+
+    versor yaw;
+    glm_quatv(yaw, -dx * camera->sensitivity, (vec3){0.0f, 1.0f, 0.0f});
+    mat4 rot;
+    glm_quat_mat4(camera->quat, rot);
+    vec3 right = { rot[0][0], rot[0][1], rot[0][2] };
+    versor pitch;
+    glm_quatv(pitch, -dy * camera->sensitivity, right);
+    versor tmp;
+    glm_quat_mul(camera->quat, yaw, tmp);
+    glm_quat_mul(pitch, tmp, camera->quat);
+    glm_quat_normalize(camera->quat);
+
+    camera->mousePos[0] = xpos;
+    camera->mousePos[1] = ypos;
+    camera->lastUpdateTimestamp = timestamp;
+}
+
+static void _ph_device_camera_translate(PhWindowHandle hWindow)
+{
+    PhDeviceHandle hDevice = ph_window_callback_data_get(hWindow);
+    PhCamera *cam = &hDevice->camera;
+
+    double now = glfwGetTime();
+    float dt = (cam->lastUpdateTimestamp > 0) ? (float)(now - cam->lastUpdateTimestamp) : (1.0f / 60.0f);
+    cam->lastUpdateTimestamp = now;
+    float step = cam->speed * dt;
+
+    mat4 rot;
+    glm_quat_mat4(cam->quat, rot);
+    vec3 forward = { -rot[2][0], -rot[2][1], -rot[2][2] };
+    vec3 right   = {  rot[0][0],  rot[0][1],  rot[0][2] };
+    vec3 up;
+    glm_vec3_cross(right, forward, up);
+    glm_vec3_normalize(up);
+
+    if(ph_window_key_get(hWindow,GLFW_KEY_W) == GLFW_PRESS) 
+        glm_vec3_muladds(forward, step, cam->position);
+    if(ph_window_key_get(hWindow,GLFW_KEY_S) == GLFW_PRESS) 
+        glm_vec3_muladds(forward, -step, cam->position);
+    if(ph_window_key_get(hWindow,GLFW_KEY_A) == GLFW_PRESS) 
+        glm_vec3_muladds(right, -step, cam->position);
+    if(ph_window_key_get(hWindow,GLFW_KEY_D) == GLFW_PRESS) 
+        glm_vec3_muladds(right, step, cam->position);
+    if(ph_window_key_get(hWindow,GLFW_KEY_SPACE) == GLFW_PRESS) 
+        glm_vec3_muladds(up, step, cam->position);
+    if(ph_window_key_get(hWindow,GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
+        glm_vec3_muladds(up, -step, cam->position);
+}
+
+PhStatus ph_device_camera_view_get(PhDeviceHandle hDevice, mat4 view)
+{
+    PhCamera *cam = &hDevice->camera;
+    mat4 rot;
+
+    versor inv;
+    glm_quat_conjugate(cam->quat, inv);
+    glm_quat_mat4(inv, view);
+
+    mat4 translate;
+    glm_mat4_identity(translate);
+    glm_translate(translate, (vec3){-cam->position[0], -cam->position[1], -cam->position[2]});
+    glm_mat4_mul(view, translate, view);
+
+    return PH_SUCCESS;
+}
+
 PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *pDeviceInfoSpan)
 {
     PhStatus status = PH_SUCCESS;
@@ -598,17 +696,19 @@ static PhStatus _ph_per_frame_resources_recreate(PhDeviceHandle hDevice, PhExten
     return PH_SUCCESS;
 }
 
-PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts)
+PhStatus ph_device_window_attach(PhDeviceHandle hDevice, PhWindowHandle hWindow, PhPresentOptions opts)
 {
     PhStatus status = PH_SUCCESS;
     uint32_t surfaceFormatCount = 0;
     VkSurfaceFormatKHR *pSurfaceFormats = NULL;
     uint32_t presentModeCount = 0;
     VkPresentModeKHR *pPresentModes = NULL;
+    PhSurfaceHandle hSurface = NULL;
 
     PH_NULL_CHECK(PH_LOG_ERROR, hDevice);
-    PH_NULL_CHECK(PH_LOG_ERROR, hSurface);
+    PH_NULL_CHECK(PH_LOG_ERROR, hWindow);
 
+    PH_CHECK(PH_LOG_ERROR,ph_window_get_surface(hWindow, &hSurface));
     VkSurfaceCapabilitiesKHR surfaceCapabilities = { 0 };
     PH_VK_CHECK(PH_LOG_ERROR, 
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(hDevice->physDevice, hSurface, &surfaceCapabilities));
@@ -680,6 +780,12 @@ PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle
     hDevice->presentOptions  = opts;
 
     PH_PROPAGATE_GOTO(PH_LOG_ERROR, _ph_swapchain_create_resources(hDevice), status, cleanup);
+        
+    // Init Camera and register with GLFW
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, _ph_device_camera_init(hDevice, &hDevice->camera), status, cleanup);
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_callback_data_set(hWindow, hDevice), status, cleanup);
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_mouse_callback_set(hWindow, _ph_device_camera_rotate), status, cleanup);
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR, ph_window_key_callback_set(hWindow, _ph_device_camera_translate), status, cleanup);
 
 cleanup:
     PH_FREE_IF_SET(pSurfaceFormats);

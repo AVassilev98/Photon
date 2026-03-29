@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GLFW/glfw3.h"
+#include "cglm/types.h"
 #include "photon/photon_status.h"
 #include "photon_instance.h"
 #include "photon_window.h"
@@ -103,7 +105,7 @@ struct PhPipeline;
 
 PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
 
-PhStatus ph_device_configure_for_present(PhDeviceHandle hDevice, PhSurfaceHandle hSurface, PhPresentOptions opts);
+PhStatus ph_device_window_attach(PhDeviceHandle hDevice, PhWindowHandle hWindow, PhPresentOptions opts);
 PhStatus ph_device_swapchain_recreate(PhDeviceHandle hDevice);
 PhStatus ph_device_extent_get(PhDeviceHandle hDevice, PhExtent2D *pExtent);
 PhStatus ph_device_frame_index_get(PhDeviceHandle hDevice, size_t *pIndex);
@@ -122,7 +124,8 @@ PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer);
 PhStatus ph_device_descriptor_sets_allocate(PhDeviceHandle hDevice, const VkDescriptorSetLayout *pLayouts, uint32_t count, PhDescriptorSet *pOut);
 PhStatus ph_device_descriptor_sets_free(PhDeviceHandle hDevice, PhDescriptorSet *pSets, uint32_t count);
 PhStatus ph_device_descriptor_sets_write(PhDeviceHandle hDevice, const PhDescriptorWrite *pWrites, uint32_t writeCount);
-
+PhStatus ph_device_camera_view_get(PhDeviceHandle hDevice, mat4 view);
+PhStatus ph_device_camera_sensitivity_set(PhDeviceHandle hDevice, float moveSensitivity, float rotateSensitivity);
 PhStatus ph_device_per_frame_register(PhDeviceHandle hDevice, size_t elemSize, PhPerFrameCreateFn create, PhPerFrameDestroyFn destroy, PhPerFrameRecreateFn recreate, PhPerFrameResourceHandle *pHandle);
 PhStatus ph_device_per_frame_create(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void *pCreateParams);
 PhStatus ph_device_per_frame_destroy(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle);

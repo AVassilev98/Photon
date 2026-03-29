@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cglm/types.h"
 #include "foundation/bitvec.h"
 #include "foundation/vec.h"
 #include "photon/photon_device.h"
@@ -41,6 +42,16 @@ FDN_BITVEC_DEFINE(StagingBufferFreeBitVec);
 FDN_VEC_DEFINE(PhTransfer, PhTransferVector);
 FDN_VEC_DEFINE(PhPerFrameResourceInternal, PhPerFrameResourceVec);
 
+typedef struct PhCamera {
+    versor  quat;
+    vec3    position;
+    vec2    mousePos;
+    double  lastUpdateTimestamp;
+
+    float sensitivity;
+    float speed;
+} PhCamera;
+
 typedef struct PhDevice {
     VkPhysicalDevice           physDevice;
     VkDevice                   device;
@@ -78,4 +89,5 @@ typedef struct PhDevice {
     PhPresentOptions           presentOptions;
 
     PhPerFrameResourceVec      perFrameResources;
+    PhCamera                   camera;
 } PhDevice;

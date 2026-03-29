@@ -10,6 +10,12 @@ struct PhWindow
     GLFWwindow          *glfwWindow;
     VkSurfaceKHR        surface;
     PhInstanceHandle    hInstance;
+    
+    void                *pCallbackData;
+    PhKeyCallbackFn     pKeyCallback;
+    PhMouseCallbackFn   pMouseCallback;
+
+    bool                userInputEventsActive;
 };
 
 typedef struct PhWindow PhWindow;

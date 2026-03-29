@@ -111,7 +111,6 @@ int main(void) {
     PhCapability deviceCaps                     = { 0 };
     PhDeviceInfoSpan deviceInfos                = { 0 };
     PhPresentOptions presentOptions             = { 0 };
-    PhSurfaceHandle hSurface                    = { 0 };
     PhDeviceHandle chosenDevice                 = { 0 };
     PhShaderModule triangleShader               = { 0 };
     PhGraphicsPipelineOptions pipelineOptions   = PH_PIPELINE_OPTIONS_DEFAULT;
@@ -162,9 +161,8 @@ int main(void) {
         },
         .mode = VK_PRESENT_MODE_FIFO_KHR
     };
-    PH_CHECK(PH_LOG_ERROR, ph_window_get_surface(hWindow, &hSurface));
     chosenDevice = deviceInfos.ptr[0].handle;
-    PH_CHECK(PH_LOG_ERROR, ph_device_configure_for_present(chosenDevice, hSurface, presentOptions));
+    PH_CHECK(PH_LOG_ERROR, ph_device_window_attach(chosenDevice, hWindow, presentOptions));
     PH_CHECK(PH_LOG_ERROR, ph_create_shader_module(deviceInfos.ptr[0].handle, SHADER_DIR "/triangle.spv", &triangleShader));
 
     VkFormat colorFormat = VK_FORMAT_B8G8R8A8_SRGB;

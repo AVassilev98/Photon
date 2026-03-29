@@ -1,21 +1,22 @@
+#include "photon/photon_window.h"
+#define GLFW_INCLUDE_VULKAN
+#include "GLFW/glfw3.h"
+#include "photon/photon_log.h"
+#include "photon/photon_status.h"
 #include "photon_window_internal.h"
 #include "photon_instance_internal.h"
 #include "photon/photon_error.h"
 
 #include <stdlib.h>
 
-/* ---- GLFW callbacks ------------------------------------------------------ */
-
-static void framebufferResizeCallback(GLFWwindow *glfwWindow, int width, int height)
+static void _ph_window_mouse_callback(GLFWwindow *glfwWindow, double xpos, double ypos)
 {
-    (void)width;
-    (void)height;
-    (void)glfwWindow;
-    /* Resize events are detected by checking ph_window_get_extent() each frame.
-       Extend this callback if you need an explicit resize notification.        */
+    PhWindowHandle window = glfwGetWindowUserPointer(glfwWindow);
+    if (window->pMouseCallback != NULL)
+    {
+        window->pMouseCallback(window, xpos, ypos);
+    }
 }
-
-/* ---- Public API ---------------------------------------------------------- */
 
 PhStatus ph_create_window(const PhWindowSettings *settings, PhWindowHandle *out)
 {
@@ -36,13 +37,15 @@ PhStatus ph_create_window(const PhWindowSettings *settings, PhWindowHandle *out)
         (int)settings->width, (int)settings->height,
         settings->title, NULL, NULL);
     PH_CHECK_GOTO(PH_LOG_ERROR, glfwWindow != NULL, PH_ERR_UNKNOWN, status, cleanup);
+    glfwSetInputMode(glfwWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     PhWindow *window = calloc(1, sizeof(PhWindow));
     PH_CHECK_GOTO(PH_LOG_ERROR, window != NULL, PH_ERR_OUT_OF_MEMORY, status, cleanup);
 
     window->glfwWindow = glfwWindow;
     window->hInstance = settings->hInstance;
-    glfwSetFramebufferSizeCallback(glfwWindow, framebufferResizeCallback);
+    window->userInputEventsActive = true;
+    glfwSetWindowUserPointer(glfwWindow, window);
 
     *out = window;
 
@@ -86,6 +89,23 @@ void ph_window_poll_events(PhWindowHandle window)
 {
     (void)window;
     glfwPollEvents();
+
+    if (window->pKeyCallback)
+    {
+        window->pKeyCallback(window);
+    }
+    if (window->pMouseCallback)
+    {
+        double xpos;
+        double ypos;
+        glfwGetCursorPos(window->glfwWindow, &xpos, &ypos);
+        window->pMouseCallback(window, xpos, ypos);
+    }
+}
+
+int ph_window_key_get(PhWindowHandle window, int key)
+{
+    return glfwGetKey(window->glfwWindow, key);
 }
 
 PhExtent2D ph_window_get_extent(PhWindowHandle window)
@@ -134,4 +154,36 @@ PhStatus ph_window_get_required_extensions(const char **out, uint32_t *count)
             out[i] = glfwExts[i];
 
     return PH_SUCCESS;
+}
+
+PhStatus ph_window_key_callback_set(PhWindowHandle window, PhKeyCallbackFn fn)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, window);
+    PH_NULL_CHECK(PH_LOG_ERROR, fn);
+
+    window->pKeyCallback = fn;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_window_mouse_callback_set(PhWindowHandle window, PhMouseCallbackFn fn)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, window);
+    PH_NULL_CHECK(PH_LOG_ERROR, fn);
+
+    window->pMouseCallback = fn;
+    return PH_SUCCESS;
+}
+
+PhStatus ph_window_callback_data_set(PhWindowHandle window, void *data)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, window);
+    PH_NULL_CHECK(PH_LOG_ERROR, data);
+
+    window->pCallbackData = data;
+    return PH_SUCCESS;
+}
+
+void *ph_window_callback_data_get(PhWindowHandle window)
+{
+    return window->pCallbackData;
 }
