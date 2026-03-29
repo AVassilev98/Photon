@@ -9,6 +9,7 @@
 typedef struct PhVertex {
     vec2 position;
     vec3 color;
+    vec2 texCoord;
 } PhVertex;
 FDN_SPAN_DEFINE(PhVertex, PhVertexSpan);
 FDN_SPAN_DEFINE(uint16_t, PhIndexSpan);

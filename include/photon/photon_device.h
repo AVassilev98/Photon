@@ -24,12 +24,34 @@ typedef struct PhBuffer {
 } PhBuffer;
 
 typedef struct PhImage {
-    VkImageView defaultView;
-    VkImage     image;
-    VkExtent2D  extent;
-    VkSemaphore readySemaphore;
+    VkImage       image;
+    VkImageView   defaultView;
+    VmaAllocation allocation;
+    VkFormat      format;
+    VkExtent2D    extent;
+    VkSemaphore   readySemaphore;
 } PhImage;
 typedef VkSemaphore     PhSemaphore;
+typedef VkSampler       PhSampler;
+typedef VkImageView     PhImageView;
+
+typedef struct PhImageCreateInfo {
+    uint32_t          width;
+    uint32_t          height;
+    VkFormat          format;
+    VkImageUsageFlags usage;
+    VkImageTiling     tiling;
+} PhImageCreateInfo;
+
+typedef struct PhSamplerCreateInfo {
+    VkFilter               magFilter;
+    VkFilter               minFilter;
+    VkSamplerAddressMode   addressModeU;
+    VkSamplerAddressMode   addressModeV;
+    VkSamplerAddressMode   addressModeW;
+    VkBool32               anisotropyEnable;
+    float                  maxAnisotropy;
+} PhSamplerCreateInfo;
 
 typedef enum PhQueueType {
     PH_QUEUE_TYPE_GRAPHICS_BIT = 0x1,
@@ -132,3 +154,10 @@ PhStatus ph_device_per_frame_destroy(PhDeviceHandle hDevice, PhPerFrameResourceH
 PhStatus ph_device_per_frame_get(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, void **ppOut);
 PhStatus ph_device_per_frame_get_at(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle, uint32_t index, void **ppOut);
 PhStatus ph_device_per_frame_unregister(PhDeviceHandle hDevice, PhPerFrameResourceHandle handle);
+PhStatus ph_device_image_create(PhDeviceHandle hDevice, const PhImageCreateInfo *pInfo, PhImage *pOut);
+PhStatus ph_device_image_upload(PhDeviceHandle hDevice, void *cpuData, uint32_t size, PhImage *pImage);
+PhStatus ph_device_image_destroy(PhDeviceHandle hDevice, PhImage *pImage);
+PhStatus ph_device_image_view_create(PhDeviceHandle hDevice, VkImage image, VkFormat format, VkImageAspectFlags aspectMask, PhImageView *pOut);
+PhStatus ph_device_image_view_destroy(PhDeviceHandle hDevice, PhImageView view);
+PhStatus ph_device_sampler_create(PhDeviceHandle hDevice, const PhSamplerCreateInfo *pInfo, PhSampler *pOut);
+PhStatus ph_device_sampler_destroy(PhDeviceHandle hDevice, PhSampler sampler);

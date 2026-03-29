@@ -1288,6 +1288,304 @@ PhStatus ph_device_buffer_map(PhDeviceHandle hDevice, PhBuffer *buffer)
     return PH_SUCCESS;
 }
 
+PhStatus ph_device_image_create(PhDeviceHandle hDevice, const PhImageCreateInfo *pInfo, PhImage *pOut)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pInfo);
+    PH_NULL_CHECK(PH_LOG_ERROR, pOut);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, pInfo->width > 0 && pInfo->height > 0, PH_ERR_INVALID_ARG);
+
+    VkImageCreateInfo imageInfo = {
+        .sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType   = VK_IMAGE_TYPE_2D,
+        .format      = pInfo->format,
+        .extent      = { .width = pInfo->width, .height = pInfo->height, .depth = 1 },
+        .mipLevels   = 1,
+        .arrayLayers = 1,
+        .samples     = VK_SAMPLE_COUNT_1_BIT,
+        .tiling      = pInfo->tiling,
+        .usage       = pInfo->usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+
+    VmaAllocationCreateInfo allocInfo = {
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+    };
+
+    VkImage image;
+    VmaAllocation allocation;
+    PH_VK_CHECK(PH_LOG_ERROR,
+        vmaCreateImage(hDevice->allocator, &imageInfo, &allocInfo, &image, &allocation, NULL));
+
+    VkImageView view = VK_NULL_HANDLE;
+    VkImageViewCreateInfo viewInfo = {
+        .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image      = image,
+        .viewType   = VK_IMAGE_VIEW_TYPE_2D,
+        .format     = pInfo->format,
+        .components = {
+            .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel   = 0,
+            .levelCount     = 1,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+    };
+
+    VkResult viewResult = vkCreateImageView(hDevice->device, &viewInfo, NULL, &view);
+    if (viewResult != VK_SUCCESS)
+    {
+        vmaDestroyImage(hDevice->allocator, image, allocation);
+        PH_VK_CHECK(PH_LOG_ERROR, viewResult);
+    }
+
+    *pOut = (PhImage){
+        .image       = image,
+        .defaultView = view,
+        .allocation  = allocation,
+        .format      = pInfo->format,
+        .extent      = { .width = pInfo->width, .height = pInfo->height },
+    };
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_image_upload(PhDeviceHandle hDevice, void *cpuData, uint32_t size, PhImage *pImage)
+{
+    PhStatus        status     = PH_SUCCESS;
+    VkCommandBuffer cmd        = VK_NULL_HANDLE;
+    VkFence         fence      = VK_NULL_HANDLE;
+    uint32_t        startChunk = 0;
+    uint32_t        idx        = 0;
+
+    PH_NULL_CHECK(PH_LOG_ERROR, cpuData);
+    PH_NULL_CHECK(PH_LOG_ERROR, pImage);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, size > 0, PH_ERR_INVALID_ARG);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, hDevice->stagingBuffer.hostPtr != NULL, PH_ERR_INVALID_STATE);
+
+    uint32_t numChunks   = (size + PH_ALLOCATION_GRANULARITY - 1) / PH_ALLOCATION_GRANULARITY;
+    size_t   totalChunks = StagingBufferFreeBitVec_len(&hDevice->stagingBufferAllocations);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, numChunks <= totalChunks, PH_ERR_INVALID_ARG);
+
+    while (startChunk + numChunks <= totalChunks &&
+           !StagingBufferFreeBitVec_all_clear(&hDevice->stagingBufferAllocations, startChunk, numChunks, &idx))
+    {
+        startChunk = idx + 1;
+    }
+    PH_CHECK(PH_LOG_ERROR, _ph_device_staging_buffer_reclaim(hDevice));
+    startChunk = 0;
+    while (startChunk + numChunks <= totalChunks &&
+           !StagingBufferFreeBitVec_all_clear(&hDevice->stagingBufferAllocations, startChunk, numChunks, &idx))
+    {
+        startChunk = idx + 1;
+    }
+    PH_CHECK_GOTO(PH_LOG_ERROR, startChunk + numChunks <= totalChunks, PH_ERR_OUT_OF_MEMORY, status, exit);
+
+    StagingBufferFreeBitVec_set_range(&hDevice->stagingBufferAllocations, startChunk, numChunks);
+    memcpy((uint8_t *)hDevice->stagingBuffer.hostPtr + (size_t)startChunk * PH_ALLOCATION_GRANULARITY,
+           cpuData, size);
+    vmaFlushAllocation(hDevice->allocator, hDevice->stagingBuffer.allocation,
+                       (VkDeviceSize)startChunk * PH_ALLOCATION_GRANULARITY, size);
+
+    PH_PROPAGATE_GOTO(PH_LOG_ERROR,
+        ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_TRANSFER_BIT, 1, &cmd),
+        status, exit);
+
+    VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkBeginCommandBuffer(cmd, &beginInfo), status, exit);
+
+    VkImageMemoryBarrier toTransferDst = {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask       = 0,
+        .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = pImage->image,
+        .subresourceRange    = {
+            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel   = 0,
+            .levelCount     = 1,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &toTransferDst);
+
+    VkBufferImageCopy region = {
+        .bufferOffset      = (VkDeviceSize)startChunk * PH_ALLOCATION_GRANULARITY,
+        .bufferRowLength   = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource  = {
+            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel       = 0,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+        .imageOffset = { 0, 0, 0 },
+        .imageExtent = { pImage->extent.width, pImage->extent.height, 1 },
+    };
+    vkCmdCopyBufferToImage(cmd, hDevice->stagingBuffer.buffer, pImage->image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier toShaderRead = {
+        .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+        .oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image               = pImage->image,
+        .subresourceRange    = {
+            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel   = 0,
+            .levelCount     = 1,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, NULL, 0, NULL, 1, &toShaderRead);
+
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR, vkEndCommandBuffer(cmd), status, exit);
+
+    VkFenceCreateInfo fenceInfo = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+        vkCreateFence(hDevice->device, &fenceInfo, NULL, &fence), status, exit);
+
+    {
+        VkSubmitInfo submitInfo = {
+            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers    = &cmd,
+        };
+        PH_VK_CHECK_GOTO(PH_LOG_ERROR,
+            vkQueueSubmit(hDevice->graphicsQueue, 1, &submitInfo, fence), status, exit);
+    }
+
+    PH_CHECK_GOTO(PH_LOG_ERROR,
+        PhTransferVector_push(&hDevice->activeTransfers,
+            ((PhTransfer){
+                .transferComplete = fence,
+                .startChunk       = startChunk,
+                .numChunks        = numChunks,
+                .commandBuffer    = cmd,
+            })),
+        PH_ERR_OUT_OF_MEMORY, status, exit);
+
+    return PH_SUCCESS;
+
+exit:
+    if (fence != VK_NULL_HANDLE) vkDestroyFence(hDevice->device, fence, NULL);
+    if (cmd   != VK_NULL_HANDLE) ph_device_command_buffer_destroy(hDevice, PH_QUEUE_TYPE_GRAPHICS_BIT, 1, &cmd);
+    StagingBufferFreeBitVec_unset_range(&hDevice->stagingBufferAllocations, startChunk, numChunks);
+    return status;
+}
+
+PhStatus ph_device_image_destroy(PhDeviceHandle hDevice, PhImage *pImage)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pImage);
+
+    if (pImage->defaultView != VK_NULL_HANDLE)
+        vkDestroyImageView(hDevice->device, pImage->defaultView, NULL);
+    if (pImage->image != VK_NULL_HANDLE && pImage->allocation != VK_NULL_HANDLE)
+        vmaDestroyImage(hDevice->allocator, pImage->image, pImage->allocation);
+
+    memset(pImage, 0, sizeof(*pImage));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_image_view_create(PhDeviceHandle hDevice, VkImage image, VkFormat format, VkImageAspectFlags aspectMask, PhImageView *pOut)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pOut);
+    PH_CHECK_OR_RETURN(PH_LOG_ERROR, image != VK_NULL_HANDLE, PH_ERR_INVALID_ARG);
+
+    VkImageViewCreateInfo viewInfo = {
+        .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image      = image,
+        .viewType   = VK_IMAGE_VIEW_TYPE_2D,
+        .format     = format,
+        .components = {
+            .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+            .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask     = aspectMask,
+            .baseMipLevel   = 0,
+            .levelCount     = 1,
+            .baseArrayLayer = 0,
+            .layerCount     = 1,
+        },
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkCreateImageView(hDevice->device, &viewInfo, NULL, pOut));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_image_view_destroy(PhDeviceHandle hDevice, PhImageView view)
+{
+    if (view != VK_NULL_HANDLE)
+        vkDestroyImageView(hDevice->device, view, NULL);
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_sampler_create(PhDeviceHandle hDevice, const PhSamplerCreateInfo *pInfo, PhSampler *pOut)
+{
+    PH_NULL_CHECK(PH_LOG_ERROR, pInfo);
+    PH_NULL_CHECK(PH_LOG_ERROR, pOut);
+
+    float maxAniso = pInfo->maxAnisotropy;
+    if (pInfo->anisotropyEnable && maxAniso == 0.0f)
+        maxAniso = hDevice->props.limits.maxSamplerAnisotropy;
+
+    VkSamplerCreateInfo samplerInfo = {
+        .sType            = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter        = pInfo->magFilter,
+        .minFilter        = pInfo->minFilter,
+        .mipmapMode       = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU     = pInfo->addressModeU,
+        .addressModeV     = pInfo->addressModeV,
+        .addressModeW     = pInfo->addressModeW,
+        .mipLodBias       = 0.0f,
+        .anisotropyEnable = pInfo->anisotropyEnable,
+        .maxAnisotropy    = maxAniso,
+        .compareEnable    = VK_FALSE,
+        .compareOp        = VK_COMPARE_OP_ALWAYS,
+        .minLod           = 0.0f,
+        .maxLod           = 0.0f,
+        .borderColor      = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = VK_FALSE,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkCreateSampler(hDevice->device, &samplerInfo, NULL, pOut));
+    return PH_SUCCESS;
+}
+
+PhStatus ph_device_sampler_destroy(PhDeviceHandle hDevice, PhSampler sampler)
+{
+    if (sampler != VK_NULL_HANDLE)
+        vkDestroySampler(hDevice->device, sampler, NULL);
+    return PH_SUCCESS;
+}
+
 PhStatus ph_device_descriptor_sets_allocate(PhDeviceHandle hDevice,
                                             const VkDescriptorSetLayout *pLayouts, uint32_t count,
                                             PhDescriptorSet *pOut)
