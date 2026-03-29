@@ -486,26 +486,52 @@ static bool _ph_requested_present_mode_in_list(VkPresentModeKHR desiredMode, VkP
 }
 
 
+static PhStatus _frame_sync_create(PhDeviceHandle hDevice, void *userdata, uint32_t frameIndex, void *out)
+{
+    (void)userdata;
+    (void)frameIndex;
+    PhFrameSync *sync = out;
+
+    VkSemaphoreCreateInfo semInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    VkFenceCreateInfo fenceInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    PH_VK_CHECK(PH_LOG_ERROR, vkCreateSemaphore(hDevice->device, &semInfo, NULL, &sync->presentSemaphore));
+    PH_VK_CHECK(PH_LOG_ERROR, vkCreateSemaphore(hDevice->device, &semInfo, NULL, &sync->renderSemaphore));
+    PH_VK_CHECK(PH_LOG_ERROR, vkCreateFence(hDevice->device, &fenceInfo, NULL, &sync->presentFence));
+
+    return PH_SUCCESS;
+}
+
+static void _frame_sync_destroy(PhDeviceHandle hDevice, void *resource)
+{
+    PhFrameSync *sync = resource;
+    vkDestroySemaphore(hDevice->device, sync->presentSemaphore, NULL);
+    vkDestroySemaphore(hDevice->device, sync->renderSemaphore, NULL);
+    vkDestroyFence(hDevice->device, sync->presentFence, NULL);
+}
+
 static void _ph_swapchain_cleanup(PhDeviceHandle hDevice)
 {
     for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
     {
         vkDestroyImageView(hDevice->device, hDevice->pSwapchainImageViews[i], NULL);
-        vkDestroySemaphore(hDevice->device, hDevice->pPresentSemaphores[i], NULL);
-        vkDestroySemaphore(hDevice->device, hDevice->pRenderSemaphores[i], NULL);
-        vkDestroyFence(hDevice->device, hDevice->pPresentFences[i], NULL);
     }
+
+    if (hDevice->frameSyncRegistered)
+    {
+        ph_device_per_frame_destroy(hDevice, hDevice->frameSyncHandle);
+        ph_device_per_frame_unregister(hDevice, hDevice->frameSyncHandle);
+        hDevice->frameSyncRegistered = false;
+    }
+
     PH_FREE_IF_SET(hDevice->pSwapchainImages);
     PH_FREE_IF_SET(hDevice->pSwapchainImageViews);
-    PH_FREE_IF_SET(hDevice->pPresentSemaphores);
-    PH_FREE_IF_SET(hDevice->pRenderSemaphores);
-    PH_FREE_IF_SET(hDevice->pPresentFences);
 
     hDevice->pSwapchainImages     = NULL;
     hDevice->pSwapchainImageViews = NULL;
-    hDevice->pPresentSemaphores   = NULL;
-    hDevice->pRenderSemaphores    = NULL;
-    hDevice->pPresentFences       = NULL;
     hDevice->swapchainImageCount  = 0;
 }
 
@@ -518,9 +544,6 @@ static PhStatus _ph_swapchain_create_resources(PhDeviceHandle hDevice)
         vkGetSwapchainImagesKHR(hDevice->device, hDevice->swapchain, &hDevice->swapchainImageCount, hDevice->pSwapchainImages));
 
     PH_MALLOC(PH_LOG_ERROR, hDevice->pSwapchainImageViews, sizeof(VkImageView) * hDevice->swapchainImageCount);
-    PH_MALLOC(PH_LOG_ERROR, hDevice->pPresentSemaphores, sizeof(VkSemaphore) * hDevice->swapchainImageCount);
-    PH_MALLOC(PH_LOG_ERROR, hDevice->pRenderSemaphores, sizeof(VkSemaphore) * hDevice->swapchainImageCount);
-    PH_MALLOC(PH_LOG_ERROR, hDevice->pPresentFences, sizeof(VkFence) * hDevice->swapchainImageCount);
 
     for (uint32_t i = 0; i < hDevice->swapchainImageCount; i++)
     {
@@ -545,21 +568,13 @@ static PhStatus _ph_swapchain_create_resources(PhDeviceHandle hDevice)
         };
         PH_VK_CHECK(PH_LOG_ERROR,
             vkCreateImageView(hDevice->device, &viewInfo, NULL, &hDevice->pSwapchainImageViews[i]));
-
-        VkSemaphoreCreateInfo semaphoreCreateInfo = {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        };
-        VkFenceCreateInfo fenceCreateInfo = {
-            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-        };
-        PH_VK_CHECK(PH_LOG_ERROR,
-            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pPresentSemaphores[i]));
-        PH_VK_CHECK(PH_LOG_ERROR,
-            vkCreateSemaphore(hDevice->device, &semaphoreCreateInfo, NULL, &hDevice->pRenderSemaphores[i]));
-        PH_VK_CHECK(PH_LOG_ERROR,
-            vkCreateFence(hDevice->device, &fenceCreateInfo, NULL, &hDevice->pPresentFences[i]));
     }
+
+    PH_CHECK(PH_LOG_ERROR,
+        ph_device_per_frame_register(hDevice, sizeof(PhFrameSync), _frame_sync_create, _frame_sync_destroy, NULL, &hDevice->frameSyncHandle));
+    PH_CHECK(PH_LOG_ERROR,
+        ph_device_per_frame_create(hDevice, hDevice->frameSyncHandle, NULL));
+    hDevice->frameSyncRegistered = true;
 
     return PH_SUCCESS;
 }
@@ -851,23 +866,24 @@ PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType ty
 
 PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image)
 {
-    size_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
     uint32_t imageIndex = 0;
     VkResult acquireResult = VK_SUCCESS;
+    PhFrameSync *sync = NULL;
 
     PH_NULL_CHECK(PH_LOG_ERROR, image);
+    PH_CHECK(PH_LOG_ERROR, ph_device_per_frame_get(hDevice, hDevice->frameSyncHandle, (void **)&sync));
 
     PH_VK_CHECK(PH_LOG_ERROR,
-        vkWaitForFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex], VK_TRUE, UINT64_MAX));
+        vkWaitForFences(hDevice->device, 1, &sync->presentFence, VK_TRUE, UINT64_MAX));
     PH_VK_CHECK(PH_LOG_ERROR,
-        vkResetFences(hDevice->device, 1, &hDevice->pPresentFences[currentImageIndex]));
+        vkResetFences(hDevice->device, 1, &sync->presentFence));
 
     acquireResult = vkAcquireNextImageKHR(hDevice->device, hDevice->swapchain, UINT64_MAX,
-        hDevice->pPresentSemaphores[currentImageIndex], VK_NULL_HANDLE, &imageIndex);
+        sync->presentSemaphore, VK_NULL_HANDLE, &imageIndex);
 
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR || acquireResult == VK_SUBOPTIMAL_KHR)
     {
-        PH_LOG_INFO("Acquire image returned %s", 
+        PH_LOG_INFO("Acquire image returned %s",
             acquireResult == VK_ERROR_OUT_OF_DATE_KHR ? "VK_ERROR_OUT_OF_DATE_KHR" : "VK_SUBOPTIMAL_KHR");
     }
 
@@ -875,7 +891,7 @@ PhStatus ph_device_present_image_get_next(PhDeviceHandle hDevice, PhImage *image
         .image = hDevice->pSwapchainImages[imageIndex],
         .defaultView = hDevice->pSwapchainImageViews[imageIndex],
         .extent = hDevice->swapchainExtent,
-        .readySemaphore = hDevice->pPresentSemaphores[imageIndex],
+        .readySemaphore = sync->presentSemaphore,
     };
 
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) { return PH_ERR_SWAPCHAIN_OUT_OF_DATE; }
@@ -911,9 +927,11 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores,
     VkResult presentStatus = VK_SUCCESS;
     uint32_t currentImageIndex = hDevice->frame % hDevice->swapchainImageCount;
     PhCommandBuffer buffer;
+    PhFrameSync *sync = NULL;
 
+    PH_CHECK(PH_LOG_ERROR, ph_device_per_frame_get(hDevice, hDevice->frameSyncHandle, (void **)&sync));
     PH_CHECK(PH_LOG_ERROR, ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_GRAPHICS_BIT, 1, &buffer));
-    
+
     VkCommandBufferBeginInfo bufferBeginInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .pNext = NULL,
@@ -954,17 +972,17 @@ PhStatus ph_device_present(PhDeviceHandle hDevice, PhSemaphore *pWaitSemaphores,
         .commandBufferCount   = 1,
         .pCommandBuffers      = &buffer,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores    = &hDevice->pRenderSemaphores[currentImageIndex],
+        .pSignalSemaphores    = &sync->renderSemaphore,
     };
-    
+
     PH_VK_CHECK(PH_LOG_ERROR,
-        vkQueueSubmit(hDevice->graphicsQueue, 1, &submitInfo, hDevice->pPresentFences[currentImageIndex]));
+        vkQueueSubmit(hDevice->graphicsQueue, 1, &submitInfo, sync->presentFence));
 
     VkPresentInfoKHR presentInfo = {
         .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext              = NULL,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores    = &hDevice->pRenderSemaphores[currentImageIndex],
+        .pWaitSemaphores    = &sync->renderSemaphore,
         .swapchainCount     = 1,
         .pSwapchains        = &hDevice->swapchain,
         .pImageIndices      = &currentImageIndex,

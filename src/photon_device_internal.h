@@ -21,6 +21,12 @@ typedef struct PhTransfer {
 
 #define PH_MAX_FRAMES_IN_FLIGHT 2
 
+typedef struct PhFrameSync {
+    VkSemaphore presentSemaphore;
+    VkSemaphore renderSemaphore;
+    VkFence     presentFence;
+} PhFrameSync;
+
 typedef struct PhPerFrameResourceInternal {
     void                    *data;       /* array of PH_MAX_FRAMES_IN_FLIGHT elements */
     size_t                   elemSize;
@@ -52,9 +58,8 @@ typedef struct PhDevice {
     VkSwapchainKHR             swapchain;
     VkImage                   *pSwapchainImages;
     VkImageView               *pSwapchainImageViews;
-    VkSemaphore               *pPresentSemaphores;
-    VkSemaphore               *pRenderSemaphores;
-    VkFence                   *pPresentFences;
+    PhPerFrameResourceHandle    frameSyncHandle;
+    bool                        frameSyncRegistered;
     uint32_t                   swapchainImageCount;
     VkFormat                   swapchainFormat;
     VkExtent2D                 swapchainExtent;
