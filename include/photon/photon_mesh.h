@@ -13,17 +13,27 @@ typedef struct PhVertex {
     vec3 normal;
     vec2 texCoord;
 } PhVertex;
-FDN_SPAN_DEFINE(PhVertex, PhVertexSpan);
-FDN_SPAN_DEFINE(uint32_t, PhIndexSpan);
+FDN_SPAN_DEFINE(PhVertex, PhVertexSpan)
+FDN_SPAN_DEFINE(uint32_t, PhIndexSpan)
+
+
+FDN_VEC_DEFINE(PhTexture, MatTexVec)
+typedef struct PhMaterial {
+    char *name;
+    uint32_t textureHandles[AI_TEXTURE_TYPE_MAX];
+    MatTexVec textures;
+    PhPerFrameResourceHandle descriptorHandle;
+} PhMaterial;
+FDN_VEC_DEFINE(PhMaterial, MaterialVec)
 
 typedef struct PhSubMesh {
     size_t numIndices;
     uint32_t indicesHandle;
-    uint32_t textureHandles[AI_TEXTURE_TYPE_MAX];
+    uint32_t materialHandle;
 } PhSubMesh;
 
 FDN_VEC_DEFINE(PhSubMesh, PhSubMeshVec)
-FDN_VEC_DEFINE(PhTexture, MeshTexVec)
+
 
 typedef struct PhMesh {
     PhVertexSpan vertices;
@@ -31,8 +41,7 @@ typedef struct PhMesh {
     PhBuffer gpuVertexBuffer;
     PhBuffer gpuIndexBuffer;
     PhSubMeshVec subMeshes;
-    MeshTexVec textures;
-    
+    MaterialVec materials;
 } PhMesh;
 
 

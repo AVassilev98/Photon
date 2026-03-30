@@ -10,6 +10,7 @@
 #include <assimp/postprocess.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vulkan/vulkan_core.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -42,12 +43,10 @@ PhStatus ph_mesh_create(PhDeviceHandle hDevice, PhVertexSpan vertices, PhIndexSp
         ph_device_buffer_upload(hDevice, indices.ptr, indices.len * sizeof(uint32_t), indexBuffer));
 
 
-    *out = (PhMesh) {
-        .vertices = vertices,
-        .gpuVertexBuffer = vertexBuffer,
-        .indices = indices,
-        .gpuIndexBuffer = indexBuffer,
-    };
+    out->vertices        = vertices;
+    out->gpuVertexBuffer = vertexBuffer;
+    out->indices         = indices;
+    out->gpuIndexBuffer  = indexBuffer;
 
     return PH_SUCCESS;
 }
@@ -91,36 +90,31 @@ PhStatus ph_mesh_create_from_file(PhDeviceHandle hDevice, const char *path, PhMe
         return PH_ERR_OUT_OF_MEMORY;
     }
 
-    MeshTexVec_init(&out->textures);
+    MaterialVec_init(&out->materials);
     PhSubMeshVec_init(&out->subMeshes);
-    MeshTexVec_reserve(&out->textures, scene->mNumMeshes * AI_TEXTURE_TYPE_MAX);
+    MaterialVec_reserve(&out->materials, scene->mNumMaterials);
     PhSubMeshVec_reserve(&out->subMeshes, scene->mNumMeshes);
 
-    uint32_t vertOff = 0;
-    uint32_t idxOff  = 0;
-    for (unsigned m = 0; m < scene->mNumMeshes; m++)
+    for (uint32_t i = 0; i < scene->mNumMaterials; i++)
     {
-        const struct aiMesh *aimesh = scene->mMeshes[m];
-        PH_LOG_INFO("Loading assimp submesh %s", aimesh->mName);
-        PhTexture tex = { 0 };
-        PhSubMesh submesh = {
-            .indicesHandle = idxOff,
-            .numIndices = aimesh->mNumFaces,
-        };
-        const struct aiMaterial *mat = scene->mMaterials[aimesh->mMaterialIndex];
+        PhMaterial material = { 0 };
+        MatTexVec_init(&material.textures);
 
-        struct aiString texPath;
+        const struct aiMaterial *mat = scene->mMaterials[i];
+        struct aiString matName;
+        aiGetMaterialString(mat, AI_MATKEY_NAME, &matName);
+        PH_LOG_INFO("Loading textures for material: %s", matName.data);
         for (uint32_t i = 0; i < AI_TEXTURE_TYPE_MAX; i++)
         {
+            struct aiString texPath;
             if (aiGetMaterialTexture(mat, i, 0, &texPath,
                         NULL, NULL, NULL, NULL, NULL, NULL) == aiReturn_SUCCESS)
             {
-                if (i == aiTextureType_UNKNOWN)
+                if (i != aiTextureType_DIFFUSE)
                 {
                     continue;
                 }
-                PH_LOG_INFO("\t Found %s texture for submesh: %s", aiTextureTypeToString(i), texPath.data);
-                
+                PH_LOG_INFO("\t Found %s texture for material: %s", aiTextureTypeToString(i), matName.data);
 
                 /* Resolve texture path relative to model directory */
                 const char *lastSlash = strrchr(path, '/');
@@ -142,8 +136,12 @@ PhStatus ph_mesh_create_from_file(PhDeviceHandle hDevice, const char *path, PhMe
                     PhTexture texture = { 0 };
                     PhStatus texStatus = ph_device_texture_create(hDevice, &texInfo, &texture);
                     stbi_image_free(pixels);
+
                     if (texStatus == PH_SUCCESS)
-                        MeshTexVec_push(&out->textures, texture);
+                    {
+                        material.textureHandles[i] = material.textures.len;
+                        MatTexVec_push(&material.textures, texture);
+                    }
                 }
                 else
                 {
@@ -151,6 +149,20 @@ PhStatus ph_mesh_create_from_file(PhDeviceHandle hDevice, const char *path, PhMe
                 }
             }
         }
+
+        MaterialVec_push(&out->materials, material);
+    }
+
+    uint32_t vertOff = 0;
+    uint32_t idxOff  = 0;
+    for (unsigned m = 0; m < scene->mNumMeshes; m++)
+    {
+        const struct aiMesh *aimesh = scene->mMeshes[m];
+        PH_LOG_INFO("Loading assimp submesh %d", m);
+        PhSubMesh submesh = {
+            .indicesHandle  = idxOff,
+            .materialHandle = aimesh->mMaterialIndex,
+        };
 
         for (unsigned v = 0; v < aimesh->mNumVertices; v++)
         {
@@ -187,7 +199,9 @@ PhStatus ph_mesh_create_from_file(PhDeviceHandle hDevice, const char *path, PhMe
             for (unsigned i = 0; i < face->mNumIndices; i++)
                 indices[idxOff++] = vertOff + face->mIndices[i];
         }
+        submesh.numIndices = idxOff - submesh.indicesHandle;
 
+        PhSubMeshVec_push(&out->subMeshes, submesh);
         vertOff += aimesh->mNumVertices;
     }
 

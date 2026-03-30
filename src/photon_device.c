@@ -1411,7 +1411,7 @@ PhStatus ph_device_image_upload(PhDeviceHandle hDevice, void *cpuData, uint32_t 
                        (VkDeviceSize)startChunk * PH_ALLOCATION_GRANULARITY, size);
 
     PH_PROPAGATE_GOTO(PH_LOG_ERROR,
-        ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_TRANSFER_BIT, 1, &cmd),
+        ph_device_command_buffer_create(hDevice, PH_QUEUE_TYPE_GRAPHICS_BIT, 1, &cmd),
         status, exit);
 
     VkCommandBufferBeginInfo beginInfo = {
