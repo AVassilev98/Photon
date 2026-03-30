@@ -1,4 +1,6 @@
 #include "photon/photon_mesh.h"
+#include "assimp/material.h"
+#include "assimp/types.h"
 #include "photon/photon_device.h"
 #include "photon/photon_error.h"
 #include "photon/photon_log.h"
@@ -8,6 +10,9 @@
 #include <assimp/postprocess.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 PhStatus ph_render_object_create(PhRenderObjectCreateInfo createInfo, PhRenderObject *out)
 {
@@ -86,11 +91,66 @@ PhStatus ph_mesh_create_from_file(PhDeviceHandle hDevice, const char *path, PhMe
         return PH_ERR_OUT_OF_MEMORY;
     }
 
+    MeshTexVec_init(&out->textures);
+    PhSubMeshVec_init(&out->subMeshes);
+    MeshTexVec_reserve(&out->textures, scene->mNumMeshes * AI_TEXTURE_TYPE_MAX);
+    PhSubMeshVec_reserve(&out->subMeshes, scene->mNumMeshes);
+
     uint32_t vertOff = 0;
     uint32_t idxOff  = 0;
     for (unsigned m = 0; m < scene->mNumMeshes; m++)
     {
         const struct aiMesh *aimesh = scene->mMeshes[m];
+        PH_LOG_INFO("Loading assimp submesh %s", aimesh->mName);
+        PhTexture tex = { 0 };
+        PhSubMesh submesh = {
+            .indicesHandle = idxOff,
+            .numIndices = aimesh->mNumFaces,
+        };
+        const struct aiMaterial *mat = scene->mMaterials[aimesh->mMaterialIndex];
+
+        struct aiString texPath;
+        for (uint32_t i = 0; i < AI_TEXTURE_TYPE_MAX; i++)
+        {
+            if (aiGetMaterialTexture(mat, i, 0, &texPath,
+                        NULL, NULL, NULL, NULL, NULL, NULL) == aiReturn_SUCCESS)
+            {
+                if (i == aiTextureType_UNKNOWN)
+                {
+                    continue;
+                }
+                PH_LOG_INFO("\t Found %s texture for submesh: %s", aiTextureTypeToString(i), texPath.data);
+                
+
+                /* Resolve texture path relative to model directory */
+                const char *lastSlash = strrchr(path, '/');
+                size_t dirLen = lastSlash ? (size_t)(lastSlash - path + 1) : 0;
+                char fullPath[512];
+                snprintf(fullPath, sizeof(fullPath), "%.*s%s", (int)dirLen, path, texPath.data);
+
+                int w, h, channels;
+                stbi_uc *pixels = stbi_load(fullPath, &w, &h, &channels, 4);
+                if (pixels)
+                {
+                    PhTextureCreateInfo texInfo = {
+                        .format   = VK_FORMAT_R8G8B8A8_SRGB,
+                        .data     = pixels,
+                        .width    = (uint32_t)w,
+                        .height   = (uint32_t)h,
+                        .elemSize = 4,
+                    };
+                    PhTexture texture = { 0 };
+                    PhStatus texStatus = ph_device_texture_create(hDevice, &texInfo, &texture);
+                    stbi_image_free(pixels);
+                    if (texStatus == PH_SUCCESS)
+                        MeshTexVec_push(&out->textures, texture);
+                }
+                else
+                {
+                    PH_LOG_WARN("Failed to load texture: %s", fullPath);
+                }
+            }
+        }
 
         for (unsigned v = 0; v < aimesh->mNumVertices; v++)
         {

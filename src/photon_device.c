@@ -1769,3 +1769,34 @@ PhStatus ph_device_per_frame_unregister(PhDeviceHandle hDevice, PhPerFrameResour
     memset(internal, 0, sizeof(*internal));
     return PH_SUCCESS;
 }
+
+PhStatus ph_device_texture_create(PhDeviceHandle hDevice, PhTextureCreateInfo *pCreateInfo, PhTexture *pOut)
+{
+    PhImageCreateInfo imageCreateInfo = {
+        .format = pCreateInfo->format,
+        .width = pCreateInfo->width,
+        .height = pCreateInfo->height,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+
+    PhSamplerCreateInfo samplerInfo = {
+        .magFilter        = VK_FILTER_LINEAR,
+        .minFilter        = VK_FILTER_LINEAR,
+        .addressModeU     = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV     = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW     = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .anisotropyEnable = VK_TRUE,
+    };
+
+    PH_CHECK(PH_LOG_ERROR, ph_device_image_create(hDevice, &imageCreateInfo, &pOut->image));
+    PH_CHECK(PH_LOG_ERROR, ph_device_sampler_create(hDevice, &samplerInfo, &pOut->imageSampler));
+    PH_CHECK(PH_LOG_ERROR, ph_device_image_upload(hDevice, pCreateInfo->data, pCreateInfo->width * pCreateInfo->height * pCreateInfo->elemSize, &pOut->image));
+
+    return PH_SUCCESS;
+}
+PhStatus ph_device_texture_destroy(PhDeviceHandle hDevice, PhTexture *texture) {
+    ph_device_image_destroy(hDevice, &texture->image);
+    ph_device_sampler_destroy(hDevice, texture->imageSampler);
+    return PH_SUCCESS;
+}

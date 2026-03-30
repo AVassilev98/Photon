@@ -143,6 +143,7 @@ target_include_directories(photon
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${assimp_SOURCE_DIR}/contrib/stb
 )
 
 target_link_libraries(photon

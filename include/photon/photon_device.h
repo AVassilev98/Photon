@@ -123,6 +123,21 @@ typedef struct PhPerFrameResourceCreateInfo {
 } PhPerFrameResourceCreateInfo;
 typedef uint32_t PhPerFrameResourceHandle;
 
+typedef struct PhTextureCreateInfo {
+    VkFormat format;
+    void *data;
+    uint32_t width;
+    uint32_t height;
+    uint32_t elemSize;
+
+} PhTextureCreateInfo;
+
+typedef struct PhTexture {
+    PhImage image;
+    PhImageView imageView;
+    PhSampler imageSampler;
+} PhTexture;
+
 struct PhPipeline;
 
 PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhDeviceInfoSpan *ppDeviceInfo);
@@ -161,3 +176,5 @@ PhStatus ph_device_image_view_create(PhDeviceHandle hDevice, VkImage image, VkFo
 PhStatus ph_device_image_view_destroy(PhDeviceHandle hDevice, PhImageView view);
 PhStatus ph_device_sampler_create(PhDeviceHandle hDevice, const PhSamplerCreateInfo *pInfo, PhSampler *pOut);
 PhStatus ph_device_sampler_destroy(PhDeviceHandle hDevice, PhSampler sampler);
+PhStatus ph_device_texture_create(PhDeviceHandle hDevice, PhTextureCreateInfo *pCreateInfo, PhTexture *pOut);
+PhStatus ph_device_texture_destroy(PhDeviceHandle hDevice, PhTexture *pOut);
