@@ -44,6 +44,8 @@ FDN_VEC_DEFINE(PhPerFrameResourceInternal, PhPerFrameResourceVec);
 
 typedef struct PhCamera {
     versor  quat;
+    float   yaw;
+    float   pitch;
     vec3    position;
     vec2    mousePos;
     double  lastUpdateTimestamp;

@@ -7,12 +7,12 @@
 
 
 typedef struct PhVertex {
-    vec2 position;
-    vec3 color;
+    vec3 position;
+    vec3 normal;
     vec2 texCoord;
 } PhVertex;
 FDN_SPAN_DEFINE(PhVertex, PhVertexSpan);
-FDN_SPAN_DEFINE(uint16_t, PhIndexSpan);
+FDN_SPAN_DEFINE(uint32_t, PhIndexSpan);
 
 typedef struct PhMesh {
     PhVertexSpan vertices;

@@ -399,9 +399,17 @@ exit:
     return status;
 }
 
+static void _ph_device_camera_rebuild_quat(PhCamera *camera)
+{
+    versor qYaw, qPitch;
+    glm_quatv(qYaw,   camera->yaw,   (vec3){0.0f, 1.0f, 0.0f});
+    glm_quatv(qPitch, camera->pitch,  (vec3){1.0f, 0.0f, 0.0f});
+    glm_quat_mul(qYaw, qPitch, camera->quat);
+    glm_quat_normalize(camera->quat);
+}
+
 static PhStatus _ph_device_camera_init(PhDeviceHandle hDevice, PhCamera *camera)
 {
-    glm_quat_identity(camera->quat);
     glm_vec3_copy((vec3){2.0f, 2.0f, 2.0f}, camera->position);
     camera->mousePos[0] = 0.0;
     camera->mousePos[1] = 0.0;
@@ -409,11 +417,14 @@ static PhStatus _ph_device_camera_init(PhDeviceHandle hDevice, PhCamera *camera)
     camera->sensitivity = 0.005f;
     camera->speed = 2.0f;
 
-    // Point toward origin: extract world-space orientation from lookat
-    mat4 lookAt;
-    glm_lookat(camera->position, (vec3){0.0f, 0.0f, 0.0f}, (vec3){0.0f, 0.0f, 1.0f}, lookAt);
-    glm_mat4_quat(lookAt, camera->quat);
-    glm_quat_conjugate(camera->quat, camera->quat);
+    /* Derive initial yaw/pitch from lookat toward origin */
+    vec3 dir;
+    glm_vec3_sub((vec3){0.0f, 0.0f, 0.0f}, camera->position, dir);
+    glm_vec3_normalize(dir);
+    camera->pitch = asinf(-dir[1]);
+    camera->yaw   = atan2f(dir[0], dir[2]);
+
+    _ph_device_camera_rebuild_quat(camera);
 
     return PH_SUCCESS;
 }
@@ -424,21 +435,17 @@ static void _ph_device_camera_rotate(PhWindowHandle hWindow, double xpos, double
     PhCamera *camera = &hDevice->camera;
     double timestamp = glfwGetTime();
 
-    float dx = xpos - camera->mousePos[0];
-    float dy =  ypos - camera->mousePos[1];
-    double dt = timestamp - camera->lastUpdateTimestamp;
+    float dx = (float)(xpos - camera->mousePos[0]);
+    float dy = (float)(ypos - camera->mousePos[1]);
 
-    versor yaw;
-    glm_quatv(yaw, -dx * camera->sensitivity, (vec3){0.0f, 1.0f, 0.0f});
-    mat4 rot;
-    glm_quat_mat4(camera->quat, rot);
-    vec3 right = { rot[0][0], rot[0][1], rot[0][2] };
-    versor pitch;
-    glm_quatv(pitch, -dy * camera->sensitivity, right);
-    versor tmp;
-    glm_quat_mul(camera->quat, yaw, tmp);
-    glm_quat_mul(pitch, tmp, camera->quat);
-    glm_quat_normalize(camera->quat);
+    camera->yaw   -= dx * camera->sensitivity;
+    camera->pitch -= dy * camera->sensitivity;
+
+    /* Clamp pitch to avoid flipping */
+    float limit = glm_rad(89.0f);
+    camera->pitch = glm_clamp(camera->pitch, -limit, limit);
+
+    _ph_device_camera_rebuild_quat(camera);
 
     camera->mousePos[0] = xpos;
     camera->mousePos[1] = ypos;
@@ -1318,6 +1325,16 @@ PhStatus ph_device_image_create(PhDeviceHandle hDevice, const PhImageCreateInfo 
     PH_VK_CHECK(PH_LOG_ERROR,
         vmaCreateImage(hDevice->allocator, &imageInfo, &allocInfo, &image, &allocation, NULL));
 
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    if (pInfo->format == VK_FORMAT_D16_UNORM ||
+        pInfo->format == VK_FORMAT_D32_SFLOAT ||
+        pInfo->format == VK_FORMAT_X8_D24_UNORM_PACK32)
+        aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    else if (pInfo->format == VK_FORMAT_D16_UNORM_S8_UINT ||
+             pInfo->format == VK_FORMAT_D24_UNORM_S8_UINT ||
+             pInfo->format == VK_FORMAT_D32_SFLOAT_S8_UINT)
+        aspect = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+
     VkImageView view = VK_NULL_HANDLE;
     VkImageViewCreateInfo viewInfo = {
         .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -1331,7 +1348,7 @@ PhStatus ph_device_image_create(PhDeviceHandle hDevice, const PhImageCreateInfo 
             .a = VK_COMPONENT_SWIZZLE_IDENTITY,
         },
         .subresourceRange = {
-            .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+            .aspectMask     = aspect,
             .baseMipLevel   = 0,
             .levelCount     = 1,
             .baseArrayLayer = 0,
