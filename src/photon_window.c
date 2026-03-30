@@ -9,15 +9,6 @@
 
 #include <stdlib.h>
 
-static void _ph_window_mouse_callback(GLFWwindow *glfwWindow, double xpos, double ypos)
-{
-    PhWindowHandle window = glfwGetWindowUserPointer(glfwWindow);
-    if (window->pMouseCallback != NULL)
-    {
-        window->pMouseCallback(window, xpos, ypos);
-    }
-}
-
 PhStatus ph_create_window(const PhWindowSettings *settings, PhWindowHandle *out)
 {
     PhStatus status = PH_SUCCESS;
@@ -42,9 +33,12 @@ PhStatus ph_create_window(const PhWindowSettings *settings, PhWindowHandle *out)
     PhWindow *window = calloc(1, sizeof(PhWindow));
     PH_CHECK_GOTO(PH_LOG_ERROR, window != NULL, PH_ERR_OUT_OF_MEMORY, status, cleanup);
 
-    window->glfwWindow = glfwWindow;
-    window->hInstance = settings->hInstance;
-    window->userInputEventsActive = true;
+    *window = (PhWindow) {
+        .cursorActive = false,
+        .escLastPressedTimestamp = 0.0f,
+        .glfwWindow = glfwWindow,
+        .hInstance = settings->hInstance,
+    };
     glfwSetWindowUserPointer(glfwWindow, window);
 
     *out = window;
@@ -90,6 +84,27 @@ void ph_window_poll_events(PhWindowHandle window)
     (void)window;
     glfwPollEvents();
 
+    double timestamp = glfwGetTime();
+
+    if (glfwGetKey(window->glfwWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS && (timestamp - window->escLastPressedTimestamp) > 0.01)
+    {
+        if (window->cursorActive)
+        {
+            window->cursorActive = false;
+            glfwSetInputMode(window->glfwWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+        else
+        {
+            window->cursorActive = true;
+            glfwSetInputMode(window->glfwWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+        window->escLastPressedTimestamp = timestamp;
+    }
+
+    if (window->cursorActive)
+    {
+        return;
+    }
     if (window->pKeyCallback)
     {
         window->pKeyCallback(window);

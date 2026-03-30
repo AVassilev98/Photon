@@ -15,7 +15,8 @@ struct PhWindow
     PhKeyCallbackFn     pKeyCallback;
     PhMouseCallbackFn   pMouseCallback;
 
-    bool                userInputEventsActive;
+    bool                cursorActive;
+    double              escLastPressedTimestamp;
 };
 
 typedef struct PhWindow PhWindow;
