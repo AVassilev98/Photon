@@ -28,7 +28,7 @@ PhStatus ph_ubo_create(PhDeviceHandle hDevice, PhUBOCreateInfo *pParams, PhUBO *
         ph_device_buffer_create(hDevice,
             PH_QUEUE_TYPE_GRAPHICS_BIT,
             pParams->size,
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR,
             VK_SHARING_MODE_EXCLUSIVE,
             &pOut->ubo,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT));

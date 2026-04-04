@@ -21,6 +21,7 @@ typedef struct PhBuffer {
     VmaAllocationCreateFlags  flags;
     void                     *hostPtr;
     uint32_t                  size;
+    VkDeviceAddress           deviceAddress;
 } PhBuffer;
 
 typedef struct PhImage {

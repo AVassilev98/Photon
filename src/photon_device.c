@@ -532,6 +532,7 @@ PhStatus ph_devices_enumerate(PhInstanceHandle hInstance, PhCapability caps, PhD
             PhDeviceHandle hDevice = pDeviceInfos[deviceInfoCount].handle;
             hDevice->instance = hInstance->instance;
             VmaAllocatorCreateInfo allocatorInfo = {
+                .flags            = caps.bufferDeviceAddress ? VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT : 0,
                 .physicalDevice   = pPhysicalDevices[i],
                 .device           = hDevice->device,
                 .instance         = hInstance->instance,
@@ -1151,8 +1152,19 @@ PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFl
         .flags = vmaFlags,
     };
 
+
     PH_VK_CHECK(PH_LOG_ERROR, 
         vmaCreateBuffer(hDevice->allocator, &bufferCreateInfo, &allocInfo, &buffer, &allocation, NULL));
+
+    VkDeviceAddress deviceAddress = 0;
+    if (flags & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    {
+        VkBufferDeviceAddressInfo deviceAddressInfo = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+            .buffer = buffer,
+        };
+        deviceAddress = vkGetBufferDeviceAddress(hDevice->device, &deviceAddressInfo);
+    }
 
     *out = (PhBuffer) {
         .buffer = buffer,
@@ -1160,6 +1172,7 @@ PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFl
         .flags = vmaFlags,
         .hostPtr = NULL,
         .size = size,
+        .deviceAddress = deviceAddress,
     };
     
     return PH_SUCCESS;
