@@ -131,8 +131,6 @@ static void _texture_data_load(void *data)
     stbi_uc *pixels = stbi_load_from_memory(img.data, (int)img.size, &w, &h, &channels, 4);
     munmap(img.data, img.size);
 
-    // stbi_uc *pixels = stbi_load(params->path, &w, &h, &channels, 4);
-
     if (pixels)
     {
         PhTextureCreateInfo texInfo = {

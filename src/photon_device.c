@@ -299,6 +299,7 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
         .sType                                        = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         .pNext                                        = &vk13,
         .bufferDeviceAddress                          = caps.bufferDeviceAddress,
+        .scalarBlockLayout                            = VK_TRUE,
         .descriptorIndexing                           = caps.descriptorIndexing,
         .runtimeDescriptorArray                       = caps.descriptorIndexing,
         .descriptorBindingPartiallyBound              = caps.descriptorIndexing,
@@ -306,9 +307,14 @@ static PhStatus _initialize_ph_device_info(VkPhysicalDevice physDevice, PhCapabi
         .shaderSampledImageArrayNonUniformIndexing    = caps.descriptorIndexing,
         .timelineSemaphore                            = caps.timelineSemaphore,
     };
+    VkPhysicalDeviceVulkan11Features vk11 = {
+        .sType                = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .pNext                = &vk12,
+        .shaderDrawParameters = VK_TRUE,
+    };
     VkPhysicalDeviceFeatures2 features2 = {
         .sType    = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext    = &vk12,
+        .pNext    = &vk11,
         .features = {
             .samplerAnisotropy = caps.samplerAnisotropy,
             .fillModeNonSolid  = caps.fillModeNonSolid,
