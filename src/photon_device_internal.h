@@ -38,9 +38,9 @@ typedef struct PhPerFrameResourceInternal {
     bool                     created;
 } PhPerFrameResourceInternal;
 
-FDN_BITVEC_DEFINE(StagingBufferFreeBitVec);
-FDN_VEC_DEFINE(PhTransfer, PhTransferVector);
-FDN_VEC_DEFINE(PhPerFrameResourceInternal, PhPerFrameResourceVec);
+FDN_BITVEC_DEFINE(StagingBufferFreeBitVec)
+FDN_VEC_DEFINE(PhTransfer, PhTransferVector)
+FDN_VEC_DEFINE(PhPerFrameResourceInternal, PhPerFrameResourceVec)
 
 typedef struct PhCamera {
     versor  quat;

@@ -410,6 +410,8 @@ static void _ph_device_camera_rebuild_quat(PhCamera *camera)
 
 static PhStatus _ph_device_camera_init(PhDeviceHandle hDevice, PhCamera *camera)
 {
+    (void)hDevice;
+
     glm_vec3_copy((vec3){2.0f, 2.0f, 2.0f}, camera->position);
     camera->mousePos[0] = 0.0;
     camera->mousePos[1] = 0.0;
@@ -487,7 +489,6 @@ static void _ph_device_camera_translate(PhWindowHandle hWindow)
 PhStatus ph_device_camera_view_get(PhDeviceHandle hDevice, mat4 view)
 {
     PhCamera *cam = &hDevice->camera;
-    mat4 rot;
 
     versor inv;
     glm_quat_conjugate(cam->quat, inv);
@@ -939,7 +940,7 @@ PhStatus ph_device_command_buffer_create(PhDeviceHandle hDevice, PhQueueType typ
 
 PhStatus ph_device_semaphore_create(PhDeviceHandle hDevice, PhSemaphore *out)
 {
-    const static VkSemaphoreCreateInfo semaphoreCreateInfo = {
+    static const VkSemaphoreCreateInfo semaphoreCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         .pNext = NULL,
         .flags = 0,
@@ -957,7 +958,6 @@ PhStatus ph_device_semaphore_destroy(PhDeviceHandle hDevice, PhSemaphore sem)
 PhStatus ph_device_command_buffer_destroy(PhDeviceHandle hDevice, PhQueueType type, size_t count, PhCommandBuffer *pBuffers)
 {
     VkCommandPool commandPool = { 0 };
-    VkCommandBufferAllocateInfo bufferAllocateInfo = { 0 };
     
     switch (type)
     {
@@ -1122,7 +1122,7 @@ PhStatus ph_device_buffer_create(PhDeviceHandle hDevice, PhQueueType queueTypeFl
     VkBuffer buffer;
 
     uint32_t numQueueFamilies = 0;
-    uint32_t queueFamilyIndices[PH_NUM_QUEUE_TYPES] = {};
+    uint32_t queueFamilyIndices[PH_NUM_QUEUE_TYPES] = { 0 };
     if (queueTypeFlags & PH_QUEUE_TYPE_GRAPHICS_BIT)
     {
         queueFamilyIndices[numQueueFamilies++] = hDevice->graphicsQueueFamily;
@@ -1188,7 +1188,6 @@ PhStatus ph_device_buffer_destroy(PhDeviceHandle hDevice, PhBuffer *buffer)
 
 static PhStatus _ph_device_staging_buffer_reclaim(PhDeviceHandle hDevice)
 {
-    uint32_t freeSlot = 0;
     uint32_t i = 0;
     while (i < hDevice->activeTransfers.len)
     {

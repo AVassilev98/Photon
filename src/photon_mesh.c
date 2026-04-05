@@ -12,7 +12,11 @@
 #include <assimp/postprocess.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef linux
 #include <sys/_pthread/_pthread_mutex_t.h>
+#else
+#include "pthread.h"
+#endif
 #include <vulkan/vulkan_core.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -110,7 +114,7 @@ typedef struct TextureLoadParams
     unsigned        textureType;
     pthread_mutex_t *texVecMutex;
 } TextureLoadParams;
-FDN_VEC_DEFINE(TextureLoadParams, TextureLoadParamVec);
+FDN_VEC_DEFINE(TextureLoadParams, TextureLoadParamVec)
 
 static void _texture_data_load(void *data)
 {

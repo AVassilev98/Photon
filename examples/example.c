@@ -12,7 +12,6 @@
 PhStatus renderTriangle(PhDeviceHandle device, PhPipeline *pipeline, PhImage *image, PhSemaphore *pWait, PhSemaphore *pSignal)
 {
     PhCommandBuffer buffer = { 0 };
-    uint32_t imageIndex = 0;
     PhSemaphore finishedSemaphore = { 0 };
 
     VkCommandBufferBeginInfo beginInfo = {
